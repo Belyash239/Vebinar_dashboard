@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+
+# Uploads
+uploads/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Real data
+public/data/real/
+
+ТЗ_ Анализ участников вебинаров.txt
