@@ -83,6 +83,28 @@ app.get('/api/tags', (req, res) => {
   }
 })
 
+// Удалить вебинар
+app.delete('/api/webinars/:id', (req, res) => {
+  try {
+    const webinarId = parseInt(req.params.id)
+    
+    if (isNaN(webinarId)) {
+      return res.status(400).json({ error: 'Invalid webinar ID' })
+    }
+
+    databaseService.deleteWebinar(webinarId)
+    databaseService.saveDatabase()
+    
+    res.json({ 
+      success: true, 
+      message: 'Webinar deleted successfully' 
+    })
+  } catch (error) {
+    console.error('Error deleting webinar:', error)
+    res.status(500).json({ error: 'Failed to delete webinar' })
+  }
+})
+
 // Загрузить файлы и импортировать данные
 app.post('/api/upload', 
   upload.fields([
@@ -129,6 +151,11 @@ app.post('/api/upload',
         const chatFilePath = files.chatFile[0].path
         await parserService.parseChatFile(chatFilePath, webinarId)
       }
+
+      // Сохраняем БД один раз в конце
+      console.log('Сохранение данных в БД...')
+      databaseService.saveDatabase()
+      console.log('✅ Импорт завершён успешно')
 
       res.json({ 
         success: true, 

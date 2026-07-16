@@ -45,16 +45,93 @@ class DatabaseService {
   getStats() {
     const db = this.db!
     
+    // Всего вебинаров
     const webinarsResult = db.exec('SELECT COUNT(*) as count FROM Вебинары')
-    const participantsResult = db.exec('SELECT COUNT(DISTINCT ID_участника) as count FROM Участники')
-    const messagesResult = db.exec('SELECT COUNT(*) as count FROM Чат')
-    const questionsResult = db.exec('SELECT COUNT(*) as count FROM Вопросы')
+    const totalWebinars = webinarsResult[0]?.values[0]?.[0] as number || 0
+    
+    // Среднее кол-во участников (которые были хотя бы 1 минуту)
+    // Присутствие_относительно_длительности хранится как текст "HH:MM:SS"
+    // Преобразуем в минуты: часы*60 + минуты + секунды/60
+    const avgParticipantsResult = db.exec(`
+      SELECT AVG(participant_count) as avg
+      FROM (
+        SELECT COUNT(DISTINCT ID_участника) as participant_count
+        FROM "Участники-Вебинары"
+        WHERE (
+          CAST(SUBSTR(Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+        GROUP BY ID_вебинара
+      )
+    `)
+    const avgParticipants = avgParticipantsResult[0]?.values[0]?.[0] as number || 0
+    
+    // Средняя конверсия (процент посетивших вебинар от всех зарегистрированных)
+    // Посетивший = тот, кто был хотя бы 1 минуту
+    const conversionResult = db.exec(`
+      SELECT 
+        COUNT(CASE WHEN (
+          CAST(SUBSTR(Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1 THEN 1 END) * 100.0 / 
+        NULLIF(COUNT(*), 0) as conversion
+      FROM "Участники-Вебинары"
+    `)
+    const avgConversion = conversionResult[0]?.values[0]?.[0] as number || 0
+    
+    // Среднее удержание (средний процент присутствия от общей длительности)
+    // Считаем только по тем, кто был хотя бы 1 минуту
+    // Присутствие_от_общей_длительности хранится как текст "48,78%"
+    // Преобразуем: убираем %, заменяем запятую на точку
+    const retentionResult = db.exec(`
+      SELECT AVG(
+        CAST(REPLACE(REPLACE(Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL)
+      ) as avg
+      FROM "Участники-Вебинары"
+      WHERE (
+        CAST(SUBSTR(Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+        CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+        CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+      ) >= 1
+      AND Присутствие_от_общей_длительности IS NOT NULL
+    `)
+    const avgRetention = retentionResult[0]?.values[0]?.[0] as number || 0
+    
+    // Всего уникальных пользователей (участников)
+    const usersResult = db.exec('SELECT COUNT(DISTINCT ID_участника) as count FROM Участники')
+    const totalUsers = usersResult[0]?.values[0]?.[0] as number || 0
+    
+    // Наиболее популярный продукт (тег с наибольшим средним удержанием)
+    const popularProductResult = db.exec(`
+      SELECT t.Название_тега as tag, 
+             AVG(
+               CAST(REPLACE(REPLACE(uw.Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL)
+             ) as avg_retention
+      FROM "Вебинары-Теги" wt
+      INNER JOIN Тег t ON wt.ID_тега = t.ID_тега
+      INNER JOIN "Участники-Вебинары" uw ON wt.ID_мероприятия = uw.ID_вебинара
+      WHERE t.Название_тега NOT IN ('для клиентов', 'для партнёров')
+        AND uw.Присутствие_от_общей_длительности IS NOT NULL
+        AND (
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+      GROUP BY t.Название_тега
+      ORDER BY avg_retention DESC
+      LIMIT 1
+    `)
+    const popularProduct = popularProductResult[0]?.values[0]?.[0] as string || 'Нет данных'
     
     return {
-      totalWebinars: webinarsResult[0]?.values[0]?.[0] || 0,
-      totalParticipants: participantsResult[0]?.values[0]?.[0] || 0,
-      totalMessages: messagesResult[0]?.values[0]?.[0] || 0,
-      totalQuestions: questionsResult[0]?.values[0]?.[0] || 0
+      totalWebinars,
+      avgParticipants: Math.round(avgParticipants),
+      avgConversion: Math.round(avgConversion),
+      avgRetention: Math.round(avgRetention),
+      totalUsers,
+      popularProduct
     }
   }
 
@@ -153,7 +230,7 @@ class DatabaseService {
   createWebinar(name: string, date: string) {
     this.db!.run(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`, [name, date])
     const result = this.db!.exec('SELECT last_insert_rowid() as id')
-    this.save()
+    // Не сохраняем сразу, только в конце импорта
     return result[0].values[0][0] as number
   }
 
@@ -162,14 +239,14 @@ class DatabaseService {
     this.db!.run(`INSERT OR IGNORE INTO Тег (Название_тега) VALUES (?)`, [tagName])
     
     const result = this.db!.exec('SELECT ID_тега FROM Тег WHERE Название_тега = ?', [tagName])
-    this.save()
+    // Не сохраняем сразу
     return result.length > 0 ? result[0].values[0][0] as number : null
   }
 
   // Связать вебинар с тегом
   linkWebinarTag(webinarId: number, tagId: number) {
     this.db!.run(`INSERT OR IGNORE INTO "Вебинары-Теги" (ID_мероприятия, ID_тега) VALUES (?, ?)`, [webinarId, tagId])
-    this.save()
+    // Не сохраняем сразу
   }
 
   // Получить или создать участника (ИНН обязателен)
@@ -188,7 +265,7 @@ class DatabaseService {
       inn
     ])
     const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-    this.save()
+    // Не сохраняем сразу
     return idResult[0].values[0][0] as number
   }
 
@@ -202,7 +279,7 @@ class DatabaseService {
         participantId
       ])
       const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-      this.save()
+      // Не сохраняем сразу
       return idResult[0].values[0][0] as number
     }
 
@@ -264,7 +341,7 @@ class DatabaseService {
       cleanData.questionsCount, cleanData.questionsPercent,
       cleanData.handsRaised, cleanData.emojiReactions
     ])
-    this.save()
+    // Не сохраняем сразу
   }
 
   // Добавить сообщение чата
@@ -275,7 +352,7 @@ class DatabaseService {
       time || null, 
       message || null
     ])
-    this.save()
+    // Не сохраняем сразу
   }
 
   // Добавить вопрос
@@ -297,7 +374,7 @@ class DatabaseService {
       data.answers || null, 
       data.answerTime || null
     ])
-    this.save()
+    // Не сохраняем сразу
   }
 
   // Удалить вебинар (откат при ошибке)
@@ -308,6 +385,43 @@ class DatabaseService {
     this.db!.run('DELETE FROM "Участники-Вебинары" WHERE ID_вебинара = ?', [webinarId])
     this.db!.run('DELETE FROM "Вебинары-Теги" WHERE ID_мероприятия = ?', [webinarId])
     this.db!.run('DELETE FROM Вебинары WHERE ID_вебинара = ?', [webinarId])
+    
+    // Удалить участников, которые больше не связаны ни с одним вебинаром
+    this.cleanupOrphanedParticipants()
+    
+    this.save()
+  }
+
+  // Очистить участников без вебинаров
+  private cleanupOrphanedParticipants() {
+    // Найти ID участников, которые не связаны ни с одним вебинаром
+    const orphanedParticipants = this.db!.exec(`
+      SELECT ID_участника 
+      FROM Участники 
+      WHERE ID_участника NOT IN (
+        SELECT DISTINCT ID_участника FROM "Участники-Вебинары"
+      )
+    `)
+
+    if (orphanedParticipants.length > 0 && orphanedParticipants[0].values.length > 0) {
+      const orphanedIds = orphanedParticipants[0].values.map(row => row[0])
+      
+      console.log(`🗑️ Удаление ${orphanedIds.length} участников без вебинаров`)
+      
+      // Удаляем email для этих участников
+      for (const participantId of orphanedIds) {
+        this.db!.run('DELETE FROM Email WHERE ID_участника = ?', [participantId])
+      }
+      
+      // Удаляем самих участников
+      for (const participantId of orphanedIds) {
+        this.db!.run('DELETE FROM Участники WHERE ID_участника = ?', [participantId])
+      }
+    }
+  }
+
+  // Сохранить БД (вызывается вручную после импорта)
+  saveDatabase() {
     this.save()
   }
 

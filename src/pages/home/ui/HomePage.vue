@@ -2,14 +2,17 @@
 import { ref, onMounted } from 'vue'
 
 interface Stats {
-  totalParticipants: number
   totalWebinars: number
-  totalMessages: number
-  totalQuestions: number
+  avgParticipants: number
+  avgConversion: number
+  avgRetention: number
+  totalUsers: number
+  popularProduct: string
 }
 
 interface Participant {
   name: string
+  inn: string
   email: string
   webinarCount: number
   messagesCount: number
@@ -33,10 +36,12 @@ interface Question {
 }
 
 const stats = ref<Stats>({
-  totalParticipants: 0,
   totalWebinars: 0,
-  totalMessages: 0,
-  totalQuestions: 0
+  avgParticipants: 0,
+  avgConversion: 0,
+  avgRetention: 0,
+  totalUsers: 0,
+  popularProduct: 'Нет данных'
 })
 
 const participants = ref<Participant[]>([])
@@ -100,10 +105,10 @@ onMounted(() => {
   <div class="min-h-screen bg-gray-50">
     <header class="bg-white shadow-sm border-b">
       <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-        <h1 class="text-2xl font-semibold text-gray-900">Аналитика по вебинарам</h1>
+        <h1 class="text-2xl font-semibold text-gray-900">Дашборд по вебинарам</h1>
         <router-link 
           to="/import"
-          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+          class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition"
         >
           Импорт данных
         </router-link>
@@ -116,25 +121,45 @@ onMounted(() => {
       </div>
 
       <div v-else>
-        <!-- Статистика -->
+        <!-- Карточки метрик -->
         <section class="mb-8">
-          <h2 class="text-xl font-semibold mb-4 text-gray-900">Общая статистика</h2>
-          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <!-- Всего вебинаров -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-500 mb-1">Всего вебинаров</div>
-              <div class="text-3xl font-bold text-gray-900">{{ stats.totalWebinars }}</div>
+              <div class="text-sm text-gray-600 mb-2">Всего вебинаров</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.totalWebinars }}</div>
             </div>
+
+            <!-- Среднее кол-во участников -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-500 mb-1">Всего участников</div>
-              <div class="text-3xl font-bold text-gray-900">{{ stats.totalParticipants }}</div>
+              <div class="text-sm text-gray-600 mb-2">Среднее кол-во участников</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgParticipants }}</div>
             </div>
+
+            <!-- Средняя конверсия -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-500 mb-1">Сообщений в чате</div>
-              <div class="text-3xl font-bold text-gray-900">{{ stats.totalMessages }}</div>
+              <div class="text-sm text-gray-600 mb-2">Средняя конверсия</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgConversion }}%</div>
             </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Среднее удержание -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-500 mb-1">Задано вопросов</div>
-              <div class="text-3xl font-bold text-gray-900">{{ stats.totalQuestions }}</div>
+              <div class="text-sm text-gray-600 mb-2">Среднее удержание</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgRetention }}%</div>
+            </div>
+
+            <!-- Всего уникальных пользователей -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="text-sm text-gray-600 mb-2">Всего уникальных пользователей</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.totalUsers }}</div>
+            </div>
+
+            <!-- Наиболее популярный продукт -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="text-sm text-gray-600 mb-2">Наиболее популярный продукт</div>
+              <div class="text-2xl font-bold text-gray-900 mt-3">{{ stats.popularProduct }}</div>
             </div>
           </div>
         </section>
@@ -150,6 +175,7 @@ onMounted(() => {
               <thead class="bg-gray-50">
                 <tr>
                   <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Имя</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ИНН</th>
                   <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
                   <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Кол-во вебинаров</th>
                   <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Сообщений</th>
@@ -159,6 +185,7 @@ onMounted(() => {
               <tbody class="bg-white divide-y divide-gray-200">
                 <tr v-for="(participant, index) in participants" :key="index" class="hover:bg-gray-50">
                   <td class="px-6 py-4 text-sm text-gray-900">{{ participant.name }}</td>
+                  <td class="px-6 py-4 text-sm text-gray-600">{{ participant.inn }}</td>
                   <td class="px-6 py-4 text-sm text-gray-600">{{ participant.email }}</td>
                   <td class="px-6 py-4 text-sm text-gray-600">{{ participant.webinarCount }}</td>
                   <td class="px-6 py-4 text-sm text-gray-600">{{ participant.messagesCount }}</td>

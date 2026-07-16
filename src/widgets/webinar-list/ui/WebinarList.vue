@@ -14,15 +14,32 @@ interface Webinar {
 }
 
 const webinars = ref<Webinar[]>([])
+const allWebinars = ref<Webinar[]>([])
 const searchQuery = ref('')
 const isLoading = ref(false)
+const deletingId = ref<number | null>(null)
+const selectedTag = ref<string>('all')
+const availableTags = ref<string[]>([])
+const showFilters = ref(false)
 
 const fetchWebinars = async () => {
   isLoading.value = true
   try {
     const response = await fetch('http://localhost:3000/api/webinars')
     const data = await response.json()
-    webinars.value = data
+    allWebinars.value = data
+    
+    // Собираем уникальные теги
+    const tagsSet = new Set<string>()
+    data.forEach((webinar: Webinar) => {
+      if (webinar.tags) {
+        webinar.tags.split(', ').forEach(tag => tagsSet.add(tag.trim()))
+      }
+    })
+    availableTags.value = Array.from(tagsSet).sort()
+    
+    // Применяем фильтры
+    applyFilters()
   } catch (error) {
     console.error('Error fetching webinars:', error)
   } finally {
@@ -30,9 +47,61 @@ const fetchWebinars = async () => {
   }
 }
 
+const applyFilters = () => {
+  let filtered = [...allWebinars.value]
+  
+  // Фильтр по тегу
+  if (selectedTag.value !== 'all') {
+    filtered = filtered.filter(w => 
+      w.tags && w.tags.split(', ').includes(selectedTag.value)
+    )
+  }
+  
+  // Поиск по названию
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = filtered.filter(w => 
+      w.name.toLowerCase().includes(query)
+    )
+  }
+  
+  webinars.value = filtered
+}
+
+const clearFilters = () => {
+  searchQuery.value = ''
+  selectedTag.value = 'all'
+  applyFilters()
+}
+
 onMounted(() => {
   fetchWebinars()
 })
+
+const deleteWebinar = async (id: number, name: string) => {
+  if (!confirm(`Вы уверены, что хотите удалить вебинар "${name}"?\n\nЭто действие удалит все связанные данные (участников, чат, вопросы).`)) {
+    return
+  }
+
+  deletingId.value = id
+  try {
+    const response = await fetch(`http://localhost:3000/api/webinars/${id}`, {
+      method: 'DELETE'
+    })
+
+    if (!response.ok) {
+      throw new Error('Failed to delete webinar')
+    }
+
+    // Обновляем список
+    await fetchWebinars()
+  } catch (error) {
+    console.error('Error deleting webinar:', error)
+    alert('Ошибка при удалении вебинара')
+  } finally {
+    deletingId.value = null
+  }
+}
 
 defineExpose({
   fetchWebinars
@@ -56,23 +125,58 @@ defineExpose({
             </svg>
           </button>
 
-          <button class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 flex items-center gap-2">
+          <button
+            @click="showFilters = !showFilters"
+            class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 flex items-center gap-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
-            Filter
+            Фильтры
+            <span v-if="selectedTag !== 'all'" class="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">1</span>
           </button>
 
           <div class="relative">
             <input
               v-model="searchQuery"
+              @input="applyFilters"
               type="text"
-              placeholder="Поиск"
+              placeholder="Поиск по названию..."
               class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <svg class="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Панель фильтров -->
+      <div v-if="showFilters" class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-gray-900">Фильтрация</h3>
+          <button
+            v-if="selectedTag !== 'all' || searchQuery"
+            @click="clearFilters"
+            class="text-sm text-blue-600 hover:text-blue-800"
+          >
+            Сбросить все
+          </button>
+        </div>
+        
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Тег</label>
+            <select
+              v-model="selectedTag"
+              @change="applyFilters"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Все теги</option>
+              <option v-for="tag in availableTags" :key="tag" :value="tag">
+                {{ tag }}
+              </option>
+            </select>
           </div>
         </div>
       </div>
@@ -83,6 +187,9 @@ defineExpose({
             <tr class="bg-gray-50">
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Название
+                <span v-if="webinars.length !== allWebinars.length" class="ml-2 text-blue-600 font-normal normal-case">
+                  ({{ webinars.length }} из {{ allWebinars.length }})
+                </span>
               </th>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Теги
@@ -90,16 +197,32 @@ defineExpose({
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Дата
               </th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Действия
+              </th>
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-if="isLoading">
-              <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+              <td colspan="4" class="px-6 py-8 text-center text-sm text-gray-500">
                 Загрузка...
               </td>
             </tr>
+            <tr v-else-if="webinars.length === 0 && (searchQuery || selectedTag !== 'all')">
+              <td colspan="4" class="px-6 py-8 text-center">
+                <div class="text-sm text-gray-500 mb-2">
+                  Нет вебинаров, соответствующих выбранным фильтрам
+                </div>
+                <button
+                  @click="clearFilters"
+                  class="text-sm text-blue-600 hover:text-blue-800"
+                >
+                  Сбросить фильтры
+                </button>
+              </td>
+            </tr>
             <tr v-else-if="webinars.length === 0">
-              <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+              <td colspan="4" class="px-6 py-8 text-center text-sm text-gray-500">
                 Нет импортированных вебинаров. Нажмите "+" чтобы добавить.
               </td>
             </tr>
@@ -112,6 +235,22 @@ defineExpose({
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                 {{ webinar.date }}
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                <button
+                  @click="deleteWebinar(webinar.id, webinar.name)"
+                  :disabled="deletingId === webinar.id"
+                  class="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Удалить вебинар"
+                >
+                  <svg v-if="deletingId === webinar.id" class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <svg v-else class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
               </td>
             </tr>
           </tbody>
