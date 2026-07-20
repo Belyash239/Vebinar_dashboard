@@ -155,6 +155,33 @@ class DatabaseService {
     return this.execQuery(query)
   }
 
+  // Получить уникальных пользователей с их продуктами
+  getUniqueUsers() {
+    const query = `
+      SELECT 
+        u.ИНН_компании as inn,
+        GROUP_CONCAT(DISTINCT e.Email) as emails,
+        GROUP_CONCAT(DISTINCT CASE 
+          WHEN t.Название_тега NOT IN ('для клиентов', 'для партнёров') 
+          THEN t.Название_тега 
+        END) as products
+      FROM Участники u
+      INNER JOIN Email e ON u.ID_участника = e.ID_участника
+      LEFT JOIN "Участники-Вебинары" uw ON u.ID_участника = uw.ID_участника
+      LEFT JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
+      LEFT JOIN "Вебинары-Теги" wt ON w.ID_вебинара = wt.ID_мероприятия
+      LEFT JOIN Тег t ON wt.ID_тега = t.ID_тега
+      WHERE (
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+      ) >= 1
+      GROUP BY u.ID_участника, u.ИНН_компании
+      ORDER BY u.ИНН_компании
+    `
+    return this.execQuery(query)
+  }
+
   // Получить последние сообщения чата
   getMessages() {
     const query = `
@@ -232,6 +259,12 @@ class DatabaseService {
     const result = this.db!.exec('SELECT last_insert_rowid() as id')
     // Не сохраняем сразу, только в конце импорта
     return result[0].values[0][0] as number
+  }
+
+  // Обновить дату вебинара
+  updateWebinarDate(webinarId: number, date: string) {
+    this.db!.run(`UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`, [date, webinarId])
+    // Не сохраняем сразу, только в конце импорта
   }
 
   // Добавить тег
@@ -428,6 +461,44 @@ class DatabaseService {
   // Получить все теги
   getAllTags() {
     const query = `SELECT ID_тега as id, Название_тега as name FROM Тег ORDER BY Название_тега`
+    return this.execQuery(query)
+  }
+
+  // Получить данные для графика новых уникальных клиентов по времени и продуктам
+  getNewClientsTimeline() {
+    // Получаем для каждого участника первый вебинар и его продукты (теги)
+    const query = `
+      SELECT 
+        w.Дата as date,
+        w.Название as webinarName,
+        GROUP_CONCAT(DISTINCT t.Название_тега) as products,
+        COUNT(DISTINCT u.ID_участника) as newClients
+      FROM Вебинары w
+      INNER JOIN "Участники-Вебинары" uw ON w.ID_вебинара = uw.ID_вебинара
+      INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+      LEFT JOIN "Вебинары-Теги" wt ON w.ID_вебинара = wt.ID_мероприятия
+      LEFT JOIN Тег t ON wt.ID_тега = t.ID_тега
+      WHERE (
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+      ) >= 1
+      AND w.ID_вебинара = (
+        SELECT w2.ID_вебинара
+        FROM Вебинары w2
+        INNER JOIN "Участники-Вебинары" uw2 ON w2.ID_вебинара = uw2.ID_вебинара
+        WHERE uw2.ID_участника = u.ID_участника
+          AND (
+            CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+            CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+            CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+          ) >= 1
+        ORDER BY w2.Дата ASC
+        LIMIT 1
+      )
+      GROUP BY w.ID_вебинара, w.Дата, w.Название
+      ORDER BY w.Дата ASC
+    `
     return this.execQuery(query)
   }
 }

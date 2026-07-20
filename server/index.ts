@@ -39,6 +39,17 @@ app.get('/api/participants', (req, res) => {
   }
 })
 
+// Получить уникальных пользователей
+app.get('/api/unique-users', (req, res) => {
+  try {
+    const users = databaseService.getUniqueUsers()
+    res.json(users)
+  } catch (error) {
+    console.error('Error fetching unique users:', error)
+    res.status(500).json({ error: 'Failed to fetch unique users' })
+  }
+})
+
 // Получить сообщения чата
 app.get('/api/messages', (req, res) => {
   try {
@@ -83,6 +94,17 @@ app.get('/api/tags', (req, res) => {
   }
 })
 
+// Получить данные для графика новых клиентов
+app.get('/api/new-clients-timeline', (req, res) => {
+  try {
+    const timeline = databaseService.getNewClientsTimeline()
+    res.json(timeline)
+  } catch (error) {
+    console.error('Error fetching new clients timeline:', error)
+    res.status(500).json({ error: 'Failed to fetch new clients timeline' })
+  }
+})
+
 // Удалить вебинар
 app.delete('/api/webinars/:id', (req, res) => {
   try {
@@ -123,9 +145,9 @@ app.post('/api/upload',
         return res.status(400).json({ error: 'Webinar name and main file are required' })
       }
 
-      // Создать вебинар
-      const currentDate = new Date().toISOString().split('T')[0]
-      webinarId = databaseService.createWebinar(webinarName, currentDate) as number
+      // Создать вебинар с временной датой
+      const tempDate = new Date().toISOString().split('T')[0]
+      webinarId = databaseService.createWebinar(webinarName, tempDate) as number
 
       // Добавить теги
       if (tags) {
@@ -138,9 +160,14 @@ app.post('/api/upload',
         }
       }
 
-      // Парсить файлы
+      // Парсить основной файл и получить дату проведения
       const mainFilePath = files.mainFile[0].path
-      await parserService.parseMainFile(mainFilePath, webinarId)
+      const webinarDate = await parserService.parseMainFile(mainFilePath, webinarId)
+      
+      // Обновить дату вебинара, если она была найдена в файле
+      if (webinarDate) {
+        databaseService.updateWebinarDate(webinarId, webinarDate)
+      }
 
       if (files.questionsFile) {
         const questionsFilePath = files.questionsFile[0].path
@@ -160,6 +187,7 @@ app.post('/api/upload',
       res.json({ 
         success: true, 
         webinarId,
+        webinarDate,
         message: 'Files uploaded and processed successfully' 
       })
     } catch (error) {

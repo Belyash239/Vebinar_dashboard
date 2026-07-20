@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 
 const emit = defineEmits<{
   openImport: []
@@ -13,14 +13,20 @@ interface Webinar {
   date: string
 }
 
+interface TagOption {
+  name: string
+  checked: boolean
+}
+
 const webinars = ref<Webinar[]>([])
 const allWebinars = ref<Webinar[]>([])
 const searchQuery = ref('')
 const isLoading = ref(false)
 const deletingId = ref<number | null>(null)
-const selectedTag = ref<string>('all')
-const availableTags = ref<string[]>([])
+const tagOptions = ref<TagOption[]>([])
 const showFilters = ref(false)
+
+const selectedTagsCount = computed(() => tagOptions.value.filter(t => t.checked).length)
 
 const fetchWebinars = async () => {
   isLoading.value = true
@@ -36,7 +42,15 @@ const fetchWebinars = async () => {
         webinar.tags.split(', ').forEach(tag => tagsSet.add(tag.trim()))
       }
     })
-    availableTags.value = Array.from(tagsSet).sort()
+    
+    // Сохраняем текущее состояние выбранных тегов
+    const currentSelected = new Set(tagOptions.value.filter(t => t.checked).map(t => t.name))
+    
+    // Создаём новые опции тегов
+    tagOptions.value = Array.from(tagsSet).sort().map(tag => ({
+      name: tag,
+      checked: currentSelected.has(tag)
+    }))
     
     // Применяем фильтры
     applyFilters()
@@ -50,11 +64,15 @@ const fetchWebinars = async () => {
 const applyFilters = () => {
   let filtered = [...allWebinars.value]
   
-  // Фильтр по тегу
-  if (selectedTag.value !== 'all') {
-    filtered = filtered.filter(w => 
-      w.tags && w.tags.split(', ').includes(selectedTag.value)
-    )
+  // Фильтр по тегам (если выбран хотя бы один)
+  const selectedTags = tagOptions.value.filter(t => t.checked).map(t => t.name)
+  if (selectedTags.length > 0) {
+    filtered = filtered.filter(w => {
+      if (!w.tags) return false
+      const webinarTags = w.tags.split(', ').map(t => t.trim())
+      // Вебинар должен содержать ВСЕ выбранные теги (логика AND)
+      return selectedTags.every(selectedTag => webinarTags.includes(selectedTag))
+    })
   }
   
   // Поиск по названию
@@ -68,9 +86,14 @@ const applyFilters = () => {
   webinars.value = filtered
 }
 
+const toggleTag = (tag: TagOption) => {
+  tag.checked = !tag.checked
+  applyFilters()
+}
+
 const clearFilters = () => {
   searchQuery.value = ''
-  selectedTag.value = 'all'
+  tagOptions.value.forEach(tag => tag.checked = false)
   applyFilters()
 }
 
@@ -133,7 +156,9 @@ defineExpose({
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
             Фильтры
-            <span v-if="selectedTag !== 'all'" class="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">1</span>
+            <span v-if="selectedTagsCount > 0" class="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">
+              {{ selectedTagsCount }}
+            </span>
           </button>
 
           <div class="relative">
@@ -156,7 +181,7 @@ defineExpose({
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-sm font-medium text-gray-900">Фильтрация</h3>
           <button
-            v-if="selectedTag !== 'all' || searchQuery"
+            v-if="selectedTagsCount > 0 || searchQuery"
             @click="clearFilters"
             class="text-sm text-blue-600 hover:text-blue-800"
           >
@@ -166,17 +191,31 @@ defineExpose({
         
         <div class="space-y-3">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Тег</label>
-            <select
-              v-model="selectedTag"
-              @change="applyFilters"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">Все теги</option>
-              <option v-for="tag in availableTags" :key="tag" :value="tag">
-                {{ tag }}
-              </option>
-            </select>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Теги
+              <span v-if="selectedTagsCount > 0" class="ml-2 text-xs text-blue-600">
+                (выбрано: {{ selectedTagsCount }})
+              </span>
+            </label>
+            <div class="max-h-60 overflow-y-auto border border-gray-300 rounded-lg bg-white">
+              <div v-if="tagOptions.length === 0" class="p-4 text-sm text-gray-500 text-center">
+                Нет доступных тегов
+              </div>
+              <label 
+                v-else
+                v-for="tag in tagOptions" 
+                :key="tag.name"
+                class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+              >
+                <input
+                  type="checkbox"
+                  :checked="tag.checked"
+                  @change="toggleTag(tag)"
+                  class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span class="ml-3 text-sm text-gray-700">{{ tag.name }}</span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -208,7 +247,7 @@ defineExpose({
                 Загрузка...
               </td>
             </tr>
-            <tr v-else-if="webinars.length === 0 && (searchQuery || selectedTag !== 'all')">
+            <tr v-else-if="webinars.length === 0 && (searchQuery || selectedTagsCount > 0)">
               <td colspan="4" class="px-6 py-8 text-center">
                 <div class="text-sm text-gray-500 mb-2">
                   Нет вебинаров, соответствующих выбранным фильтрам

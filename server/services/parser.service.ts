@@ -6,7 +6,7 @@ const XLSX = require('xlsx')
 
 class ParserService {
   // Парсинг основного файла (2 листа: участники и сеансы входов)
-  async parseMainFile(filePath: string, webinarId: number) {
+  async parseMainFile(filePath: string, webinarId: number): Promise<string | null> {
     const workbook = XLSX.readFile(filePath)
     
     // Найти лист "Участники" (первый не "Общая информация")
@@ -23,6 +23,31 @@ class ParserService {
     // Выводим названия полей для отладки
     if (participantsData.length > 0) {
       console.log('Поля основного файла:', Object.keys(participantsData[0] as any).slice(0, 20))
+    }
+
+    // Извлекаем дату проведения из первой строки
+    let webinarDate: string | null = null
+    if (participantsData.length > 0) {
+      const firstRow = participantsData[0] as any
+      const dateField = firstRow['Дата проведения']
+      
+      if (dateField) {
+        // Excel даты могут быть в разных форматах
+        if (typeof dateField === 'number') {
+          // Excel serial date
+          const date = XLSX.SSF.parse_date_code(dateField)
+          webinarDate = `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`
+        } else if (typeof dateField === 'string') {
+          // Строковая дата, пытаемся распарсить
+          const parsed = new Date(dateField)
+          if (!isNaN(parsed.getTime())) {
+            webinarDate = parsed.toISOString().split('T')[0]
+          } else {
+            webinarDate = dateField
+          }
+        }
+        console.log(`📅 Дата проведения вебинара: ${webinarDate}`)
+      }
     }
 
     let processedCount = 0
@@ -128,6 +153,8 @@ class ParserService {
     if (skippedInnCount > 0) {
       console.log(`⚠️ Пропущено записей с некорректным/отсутствующим ИНН: ${skippedInnCount}`)
     }
+    
+    return webinarDate
   }
 
   // Парсинг файла с вопросами
