@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 
 const emit = defineEmits<{
   openImport: []
+  openExport: []
   refresh: []
 }>()
 
@@ -139,6 +140,14 @@ defineExpose({
         
         <div class="flex items-center gap-4">
           <button
+            @click="emit('openExport')"
+            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium"
+            title="Экспорт данных"
+          >
+            Экспорт данных
+          </button>
+
+          <button
             @click="emit('openImport')"
             class="w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition"
             title="Добавить вебинар"
@@ -267,7 +276,12 @@ defineExpose({
             </tr>
             <tr v-else v-for="webinar in webinars" :key="webinar.id" class="hover:bg-gray-50">
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                {{ webinar.name }}
+                <router-link 
+                  :to="`/webinar/${webinar.id}`"
+                  class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                >
+                  {{ webinar.name }}
+                </router-link>
               </td>
               <td class="px-6 py-4 text-sm text-gray-600">
                 {{ webinar.tags || '—' }}

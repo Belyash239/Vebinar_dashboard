@@ -97,17 +97,62 @@ class ParserService {
           continue
         }
 
+        // Обработка номера телефона
+        let phoneNumber = row['Телефон'] || row['Номер телефона'] || row['Мобильный телефон']
+        if (phoneNumber) {
+          // Если это число (Excel часто хранит телефоны как числа), конвертируем в строку
+          if (typeof phoneNumber === 'number') {
+            phoneNumber = String(phoneNumber)
+          } else {
+            phoneNumber = String(phoneNumber).trim()
+          }
+          
+          // Удаляем пробелы, тире, скобки для нормализации
+          phoneNumber = phoneNumber.replace(/[\s\-\(\)]/g, '')
+          
+          // Если телефон начинается с 8, заменяем на +7
+          if (phoneNumber.startsWith('8') && phoneNumber.length === 11) {
+            phoneNumber = '+7' + phoneNumber.slice(1)
+          }
+          
+          // Если телефон начинается с 7 без +, добавляем +
+          if (phoneNumber.startsWith('7') && phoneNumber.length === 11 && !phoneNumber.startsWith('+')) {
+            phoneNumber = '+' + phoneNumber
+          }
+          
+          // Форматируем телефон: +7 XXX XXX-XX-XX
+          if (phoneNumber.startsWith('+7') && phoneNumber.length === 12) {
+            phoneNumber = `${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)}-${phoneNumber.slice(8, 10)}-${phoneNumber.slice(10, 12)}`
+          }
+        }
+
         // Создать или получить участника (теперь ИНН всегда валидный)
         const participantId = databaseService.getOrCreateParticipant(
           row['Имя'] || '',
           row['Фамилия'] || '',
-          innStr
+          innStr,
+          phoneNumber || null,
+          row['Компания']
         )
 
         // Создать или получить email
         const emailId = databaseService.getOrCreateEmail(row['Email'], participantId)
 
         // Добавить связь участник-вебинар
+        // Парсим процент удержания из формата "99,69%" в число 99.69
+        let attendancePercent = row['Присутствие от общей длительности мероприятия'] ||
+                                row['Присутствие от общей длительности   мероприятия']
+        
+        if (attendancePercent && typeof attendancePercent === 'string') {
+          // Убираем % и заменяем запятую на точку
+          attendancePercent = parseFloat(attendancePercent.replace('%', '').replace(',', '.'))
+        } else if (typeof attendancePercent === 'number') {
+          // Если уже число, используем как есть
+          attendancePercent = attendancePercent
+        } else {
+          attendancePercent = null
+        }
+
         databaseService.addParticipantWebinar(participantId, webinarId, {
             chatName: row['Имя в чате'],
             company: row['Компания'],
@@ -129,8 +174,7 @@ class ParserService {
             attendanceDuration: row['Присутствие относительно длительности мероприятия, чч:мм:сс'] || 
                                row['Присутствие относительно длительности   мероприятия, чч:мм:сс'] ||
                                row['Присутствие относительно длительности мероприятия'],
-            attendancePercent: row['Присутствие от общей длительности мероприятия'] ||
-                              row['Присутствие от общей длительности   мероприятия'],
+            attendancePercent: attendancePercent,
             messagesCount: row['Кол-во сообщений'] || 0,
             messagesPercent: row['Процент от общего кол-ва сообщений'],
             questionsCount: row['Кол-во вопросов'] || 0,

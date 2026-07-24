@@ -1,9 +1,18 @@
+-- Таблица «Компания»
+CREATE TABLE IF NOT EXISTS Компания (
+  ID_компании INTEGER PRIMARY KEY AUTOINCREMENT,
+  ИНН_компании TEXT UNIQUE NOT NULL,
+  Название TEXT
+);
+
 -- Таблица «Участники»
 CREATE TABLE IF NOT EXISTS Участники (
   ID_участника INTEGER PRIMARY KEY AUTOINCREMENT,
-  ИНН_компании TEXT NOT NULL UNIQUE,
+  ID_компании INTEGER,
   Имя TEXT,
-  Фамилия TEXT
+  Фамилия TEXT,
+  Номер_телефона TEXT,
+  FOREIGN KEY (ID_компании) REFERENCES Компания(ID_компании)
 );
 
 -- Таблица «Email»

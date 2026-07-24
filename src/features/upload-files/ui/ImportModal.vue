@@ -46,6 +46,14 @@ const updateSelectedCount = () => {
   selectedTagsCount.value = tags.value.filter(t => t.checked).length
 }
 
+const toggleAllTags = () => {
+  const allSelected = tags.value.every(t => t.checked)
+  tags.value.forEach(tag => {
+    tag.checked = !allSelected
+  })
+  updateSelectedCount()
+}
+
 onMounted(() => {
   loadTags()
 })
@@ -206,8 +214,15 @@ const handleSubmit = async () => {
             <div v-else class="bg-gray-50 rounded-lg p-4">
               <div class="flex items-center justify-between mb-3 pb-3 border-b border-gray-200">
                 <span class="text-sm text-gray-600">Выберите теги</span>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-3">
                   <span class="text-sm text-gray-600">Выбрано: {{ selectedTagsCount }}</span>
+                  <button
+                    type="button"
+                    @click="toggleAllTags"
+                    class="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {{ tags.every(t => t.checked) ? 'Снять всё' : 'Выбрать всё' }}
+                  </button>
                 </div>
               </div>
               <div class="max-h-60 overflow-y-auto space-y-2">

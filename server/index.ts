@@ -3,6 +3,7 @@ import cors from 'cors'
 import multer from 'multer'
 import databaseService from './database/database.service.js'
 import parserService from './services/parser.service.js'
+import exportService from './services/export.service.js'
 
 const app = express()
 const PORT = 3000
@@ -47,6 +48,131 @@ app.get('/api/unique-users', (req, res) => {
   } catch (error) {
     console.error('Error fetching unique users:', error)
     res.status(500).json({ error: 'Failed to fetch unique users' })
+  }
+})
+
+// Получить детали конкретного вебинара
+app.get('/api/webinars/:id', (req, res) => {
+  try {
+    const webinarId = parseInt(req.params.id)
+    
+    if (isNaN(webinarId)) {
+      return res.status(400).json({ error: 'Invalid webinar ID' })
+    }
+
+    const webinar = databaseService.getWebinarDetail(webinarId)
+    
+    if (!webinar) {
+      return res.status(404).json({ error: 'Webinar not found' })
+    }
+
+    res.json(webinar)
+  } catch (error) {
+    console.error('Error fetching webinar detail:', error)
+    res.status(500).json({ error: 'Failed to fetch webinar detail' })
+  }
+})
+
+// Получить пользователей конкретного вебинара
+app.get('/api/webinars/:id/users', (req, res) => {
+  try {
+    const webinarId = parseInt(req.params.id)
+    
+    if (isNaN(webinarId)) {
+      return res.status(400).json({ error: 'Invalid webinar ID' })
+    }
+
+    const users = databaseService.getWebinarUsers(webinarId)
+    res.json(users)
+  } catch (error) {
+    console.error('Error fetching webinar users:', error)
+    res.status(500).json({ error: 'Failed to fetch webinar users' })
+  }
+})
+
+// Получить UTM статистику конкретного вебинара
+app.get('/api/webinars/:id/utm-stats', (req, res) => {
+  try {
+    const webinarId = parseInt(req.params.id)
+    
+    if (isNaN(webinarId)) {
+      return res.status(400).json({ error: 'Invalid webinar ID' })
+    }
+
+    const stats = databaseService.getWebinarUtmStats(webinarId)
+    res.json(stats)
+  } catch (error) {
+    console.error('Error fetching UTM stats:', error)
+    res.status(500).json({ error: 'Failed to fetch UTM stats' })
+  }
+})
+
+// Получить детали участника по ИНН
+app.get('/api/participants/:inn', (req, res) => {
+  try {
+    const inn = req.params.inn
+    const participant = databaseService.getParticipantDetail(inn)
+    
+    if (!participant) {
+      return res.status(404).json({ error: 'Participant not found' })
+    }
+    
+    res.json(participant)
+  } catch (error) {
+    console.error('Error fetching participant detail:', error)
+    res.status(500).json({ error: 'Failed to fetch participant detail' })
+  }
+})
+
+// Получить вебинары участника
+app.get('/api/participants/:inn/webinars', (req, res) => {
+  try {
+    const inn = req.params.inn
+    const webinars = databaseService.getParticipantWebinars(inn)
+    res.json(webinars)
+  } catch (error) {
+    console.error('Error fetching participant webinars:', error)
+    res.status(500).json({ error: 'Failed to fetch participant webinars' })
+  }
+})
+
+// Экспорт чатов и вопросов для конкретного вебинара
+app.get('/api/export/webinar/:id', async (req, res) => {
+  try {
+    const webinarId = parseInt(req.params.id)
+    
+    if (isNaN(webinarId)) {
+      return res.status(400).json({ error: 'Invalid webinar ID' })
+    }
+
+    const buffer = await exportService.exportWebinarData(webinarId)
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=webinar_${webinarId}_export.xlsx`)
+    res.send(buffer)
+  } catch (error) {
+    console.error('Error exporting webinar data:', error)
+    res.status(500).json({ error: 'Failed to export data' })
+  }
+})
+
+// Экспорт чатов и вопросов по тегам
+app.post('/api/export/tags', async (req, res) => {
+  try {
+    const { tagIds } = req.body
+    
+    if (!tagIds || !Array.isArray(tagIds) || tagIds.length === 0) {
+      return res.status(400).json({ error: 'Tag IDs are required' })
+    }
+
+    const buffer = await exportService.exportByTags(tagIds)
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=tags_export.xlsx`)
+    res.send(buffer)
+  } catch (error) {
+    console.error('Error exporting by tags:', error)
+    res.status(500).json({ error: 'Failed to export data' })
   }
 })
 
@@ -102,6 +228,17 @@ app.get('/api/new-clients-timeline', (req, res) => {
   } catch (error) {
     console.error('Error fetching new clients timeline:', error)
     res.status(500).json({ error: 'Failed to fetch new clients timeline' })
+  }
+})
+
+// Получить данные для общего количества посещений
+app.get('/api/total-visitors-timeline', (req, res) => {
+  try {
+    const timeline = databaseService.getTotalVisitorsTimeline()
+    res.json(timeline)
+  } catch (error) {
+    console.error('Error fetching total visitors timeline:', error)
+    res.status(500).json({ error: 'Failed to fetch total visitors timeline' })
   }
 })
 

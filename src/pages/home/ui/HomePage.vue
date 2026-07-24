@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue'
-import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
+import { Chart, BarController, BarElement, LineController, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
 
 // Регистрируем компоненты Chart.js
-Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
+Chart.register(BarController, BarElement, LineController, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend)
 
 interface Stats {
   totalWebinars: number
@@ -16,9 +16,14 @@ interface Stats {
 
 interface TimelineData {
   date: string
-  webinarName: string
-  products: string
-  newClients: number
+  product: string
+  participantIds: string
+  newParticipantIds: string
+}
+
+interface TotalVisitorsData {
+  date: string
+  totalVisitors: number
 }
 
 interface Webinar {
@@ -30,6 +35,8 @@ interface Webinar {
 
 interface UniqueUser {
   inn: string
+  companyName: string | null
+  phone: string | null
   emails: string
   products: string
 }
@@ -44,6 +51,7 @@ const stats = ref<Stats>({
 })
 
 const timelineData = ref<TimelineData[]>([])
+const totalVisitorsData = ref<TotalVisitorsData[]>([])
 const webinars = ref<Webinar[]>([])
 const allWebinars = ref<Webinar[]>([])
 const uniqueUsers = ref<UniqueUser[]>([])
@@ -55,6 +63,24 @@ const tagOptions = ref<{ name: string; checked: boolean }[]>([])
 const isLoading = ref(false)
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 let chartInstance: Chart | null = null
+
+const toggleAllChartDatasets = () => {
+  if (!chartInstance) return
+  
+  // Проверяем, все ли datasets видимы
+  const allVisible = chartInstance.data.datasets.every((ds, i) => chartInstance!.isDatasetVisible(i))
+  
+  // Переключаем видимость всех datasets
+  chartInstance.data.datasets.forEach((ds, i) => {
+    if (allVisible) {
+      chartInstance!.hide(i)
+    } else {
+      chartInstance!.show(i)
+    }
+  })
+  
+  chartInstance.update()
+}
 
 const selectedTagsCount = computed(() => tagOptions.value.filter(t => t.checked).length)
 
@@ -73,6 +99,15 @@ const fetchTimelineData = async () => {
     timelineData.value = await response.json()
   } catch (error) {
     console.error('Error fetching timeline data:', error)
+  }
+}
+
+const fetchTotalVisitorsData = async () => {
+  try {
+    const response = await fetch('http://localhost:3000/api/total-visitors-timeline')
+    totalVisitorsData.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching total visitors data:', error)
   }
 }
 
@@ -204,56 +239,199 @@ const createChart = () => {
     chartInstance.destroy()
   }
 
-  // Группируем данные по датам и продуктам
-  const dateGroups: { [key: string]: { [product: string]: number } } = {}
+  // Оптимизированная обработка данных - данные уже агрегированы с сервера
+  const monthGroups: { 
+    [monthKey: string]: { 
+      [product: string]: { 
+        participants: Set<number>,
+        firstTimers: Set<number>
+      } 
+    } 
+  } = {}
+  
   const allProducts = new Set<string>()
 
+  // Один проход для парсинга агрегированных данных
   timelineData.value.forEach(item => {
-    const date = new Date(item.date).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })
+    const currentMonth = new Date(item.date).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })
     
-    if (!dateGroups[date]) {
-      dateGroups[date] = {}
+    allProducts.add(item.product)
+    
+    if (!monthGroups[currentMonth]) {
+      monthGroups[currentMonth] = {}
     }
-
-    // Разбиваем продукты (исключаем "для клиентов" и "для партнёров")
-    if (item.products) {
-      const products = item.products.split(',')
-        .map(p => p.trim())
-        .filter(p => p !== 'для клиентов' && p !== 'для партнёров')
-      
-      products.forEach(product => {
-        allProducts.add(product)
-        if (!dateGroups[date][product]) {
-          dateGroups[date][product] = 0
-        }
-        dateGroups[date][product] += item.newClients
-      })
+    
+    if (!monthGroups[currentMonth][item.product]) {
+      monthGroups[currentMonth][item.product] = {
+        participants: new Set(),
+        firstTimers: new Set()
+      }
+    }
+    
+    // Парсим ID участников из строки
+    if (item.participantIds) {
+      const ids = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+      ids.forEach(id => monthGroups[currentMonth][item.product].participants.add(id))
+    }
+    
+    // Парсим ID новых участников
+    if (item.newParticipantIds) {
+      const newIds = item.newParticipantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+      newIds.forEach(id => monthGroups[currentMonth][item.product].firstTimers.add(id))
     }
   })
 
-  const labels = Object.keys(dateGroups)
+  // Сортируем месяцы
+  const sortedMonths = Object.keys(monthGroups).sort((a, b) => {
+    const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+    const [monthA, yearA] = a.split(' ')
+    const [monthB, yearB] = b.split(' ')
+    const dateA = new Date(parseInt(yearA), months.findIndex(m => monthA.startsWith(m)))
+    const dateB = new Date(parseInt(yearB), months.findIndex(m => monthB.startsWith(m)))
+    return dateA.getTime() - dateB.getTime()
+  })
+
   const productsList = Array.from(allProducts)
 
+  // Кумулятивное накопление для каждого продукта
+  const cumulativeData: { 
+    [product: string]: { 
+      accumulated: number[], 
+      newParticipants: number[] 
+    } 
+  } = {}
+
+  productsList.forEach(product => {
+    cumulativeData[product] = {
+      accumulated: [],
+      newParticipants: []
+    }
+    
+    const seenParticipants = new Set<number>()
+    let previousTotal = 0
+    
+    sortedMonths.forEach(month => {
+      const monthData = monthGroups[month][product]
+      
+      if (monthData) {
+        // Добавляем всех участников этого месяца в накопленные
+        monthData.participants.forEach(p => seenParticipants.add(p))
+        
+        const totalAccumulated = seenParticipants.size
+        const newCount = monthData.firstTimers.size
+        
+        // Накопленная часть = всего накоплено минус новые текущего месяца
+        // Но не меньше предыдущего накопленного значения
+        const accumulatedOnly = Math.max(previousTotal, totalAccumulated - newCount)
+        
+        cumulativeData[product].accumulated.push(accumulatedOnly)
+        cumulativeData[product].newParticipants.push(newCount)
+        
+        previousTotal = totalAccumulated
+      } else {
+        // Если в этом месяце не было данных, используем предыдущее значение
+        cumulativeData[product].accumulated.push(previousTotal)
+        cumulativeData[product].newParticipants.push(0)
+      }
+    })
+  })
+
+  const labels = sortedMonths
+
   // Цвета для продуктов
-  const colors = [
-    '#EF4444', // красный
-    '#10B981', // зелёный
-    '#F59E0B', // жёлтый
-    '#3B82F6', // синий
-    '#8B5CF6', // фиолетовый
-    '#EC4899', // розовый
-    '#14B8A6', // бирюзовый
-    '#F97316', // оранжевый
+  const baseColors = [
+    '#EF4444', '#10B981', '#F59E0B', '#3B82F6', 
+    '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'
   ]
 
-  // Создаём datasets для каждого продукта
-  const datasets = productsList.map((product, index) => ({
-    label: product,
-    data: labels.map(date => dateGroups[date][product] || 0),
-    backgroundColor: colors[index % colors.length],
-    borderColor: colors[index % colors.length],
-    borderWidth: 1
-  }))
+  const datasets: any[] = []
+
+  // Создаём datasets для накопленных участников
+  productsList.forEach((product, index) => {
+    const color = baseColors[index % baseColors.length]
+    
+    datasets.push({
+      label: product,
+      data: cumulativeData[product].accumulated,
+      backgroundColor: color,
+      borderColor: color,
+      borderWidth: 1,
+      stack: `stack-${index}`,
+      type: 'bar' as const,
+      productName: product,
+      dataType: 'accumulated'
+    })
+  })
+
+  // Создаём datasets для новых участников
+  productsList.forEach((product, index) => {
+    const color = baseColors[index % baseColors.length]
+    const lightColor = color + '80'
+    
+    datasets.push({
+      label: product, // Тот же label, чтобы скрыть дубликат в легенде
+      data: cumulativeData[product].newParticipants,
+      backgroundColor: lightColor,
+      borderColor: color,
+      borderWidth: 1,
+      stack: `stack-${index}`,
+      type: 'bar' as const,
+      hidden: false,
+      productName: product,
+      dataType: 'new'
+    })
+  })
+
+  // Добавляем линию с кумулятивным количеством уникальных участников
+  const allParticipantsByMonth: number[] = []
+  const allAccumulatedByMonth: number[] = []
+  const allNewByMonth: number[] = []
+  const seenAllParticipants = new Set<number>()
+  let previousTotalAll = 0
+  
+  sortedMonths.forEach(month => {
+    const monthData = monthGroups[month]
+    const monthNewParticipants = new Set<number>()
+    
+    if (monthData) {
+      // Собираем всех участников этого месяца по всем продуктам
+      Object.values(monthData).forEach(productData => {
+        productData.participants.forEach(p => {
+          // Если участник новый (не был ранее), добавляем в новые
+          if (!seenAllParticipants.has(p)) {
+            monthNewParticipants.add(p)
+          }
+          seenAllParticipants.add(p)
+        })
+      })
+    }
+    
+    const total = seenAllParticipants.size
+    const newCount = monthNewParticipants.size
+    const accumulatedOnly = total - newCount
+    
+    allParticipantsByMonth.push(total)
+    allNewByMonth.push(newCount)
+    allAccumulatedByMonth.push(accumulatedOnly)
+    
+    previousTotalAll = total
+  })
+
+  datasets.push({
+    label: 'Общее количество',
+    data: allParticipantsByMonth,
+    backgroundColor: '#1F2937',
+    borderColor: '#1F2937',
+    borderWidth: 2,
+    type: 'line' as const,
+    pointRadius: 4,
+    pointHoverRadius: 6,
+    yAxisID: 'y',
+    order: 0,
+    // Добавляем данные для tooltip
+    accumulatedData: allAccumulatedByMonth,
+    newData: allNewByMonth
+  })
 
   chartInstance = new Chart(chartCanvas.value, {
     type: 'bar',
@@ -264,6 +442,10 @@ const createChart = () => {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
       scales: {
         x: {
           stacked: true,
@@ -285,55 +467,89 @@ const createChart = () => {
       },
       plugins: {
         legend: {
-          position: 'right',
-          title: {
-            display: true,
-            text: 'Легенда',
-            padding: {
-              top: 0,
-              bottom: 10
-            },
-            font: {
-              size: 13,
-              weight: 'bold'
-            }
-          },
+          position: 'bottom',
+          align: 'center',
           labels: {
-            boxWidth: 20,
-            padding: 10,
+            boxWidth: 15,
+            padding: 20,
             font: {
-              size: 11
+              size: 12
+            },
+            usePointStyle: true,
+            pointStyle: 'circle',
+            filter: function(legendItem, chartData) {
+              // Показываем только первый dataset для каждого продукта (накопленные)
+              // Скрываем дубликаты (новые) из легенды
+              const dataset = chartData.datasets[legendItem.datasetIndex]
+              return dataset.dataType === 'accumulated' || legendItem.text === 'Общее количество'
             }
           },
           onClick: (e, legendItem, legend) => {
             const index = legendItem.datasetIndex
             const chart = legend.chart
             
-            // Проверяем, сколько datasets сейчас видимо
-            const visibleCount = chart.data.datasets.filter((ds, i) => chart.isDatasetVisible(i)).length
+            // При клике на продукт показываем/скрываем оба его dataset (накопленные и новые)
+            const clickedDataset = chart.data.datasets[index]
             
-            // Если кликнули на единственный видимый dataset, показываем все
-            if (visibleCount === 1 && chart.isDatasetVisible(index)) {
-              chart.data.datasets.forEach((ds, i) => {
-                chart.show(i)
-              })
-            } else {
-              // Иначе скрываем все и показываем только выбранный
-              chart.data.datasets.forEach((ds, i) => {
-                if (i === index) {
-                  chart.show(i)
-                } else {
-                  chart.hide(i)
+            if (clickedDataset.productName) {
+              const productName = clickedDataset.productName
+              const isCurrentlyVisible = chart.isDatasetVisible(index)
+              
+              // Находим оба dataset этого продукта и переключаем их видимость
+              chart.data.datasets.forEach((ds: any, i) => {
+                if (ds.productName === productName) {
+                  if (isCurrentlyVisible) {
+                    chart.hide(i)
+                  } else {
+                    chart.show(i)
+                  }
                 }
               })
+            } else {
+              // Для линии (общее количество) стандартное поведение
+              if (chart.isDatasetVisible(index)) {
+                chart.hide(index)
+              } else {
+                chart.show(index)
+              }
             }
             
             chart.update()
           }
         },
         tooltip: {
-          mode: 'index',
-          intersect: false
+          mode: 'point',
+          intersect: true,
+          callbacks: {
+            title: function(context) {
+              return context[0].label
+            },
+            label: function(context) {
+              const dataset: any = context.dataset
+              const value = context.parsed.y
+              
+              if (dataset.productName) {
+                if (dataset.dataType === 'accumulated') {
+                  return `${dataset.productName} (накопленные): ${value}`
+                } else {
+                  return `${dataset.productName} (новые): ${value}`
+                }
+              } else if (dataset.label === 'Общее количество') {
+                // Для линейного графика показываем детали
+                const index = context.dataIndex
+                const accumulated = dataset.accumulatedData?.[index] || 0
+                const newParticipants = dataset.newData?.[index] || 0
+                
+                return [
+                  `${dataset.label}: ${value}`,
+                  `Накопленные: ${accumulated}`,
+                  `Новые: ${newParticipants}`
+                ]
+              } else {
+                return `${dataset.label}: ${value}`
+              }
+            }
+          }
         }
       }
     }
@@ -345,6 +561,7 @@ const loadData = async () => {
   await Promise.all([
     fetchStats(),
     fetchTimelineData(),
+    fetchTotalVisitorsData(),
     fetchWebinars(),
     fetchUniqueUsers()
   ])
@@ -369,7 +586,7 @@ onMounted(() => {
           to="/import"
           class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition"
         >
-          Импорт данных
+          Управление данными
         </router-link>
       </div>
     </header>
@@ -425,7 +642,15 @@ onMounted(() => {
 
         <!-- График новых уникальных клиентов -->
         <section class="mb-8">
-          <h2 class="text-xl font-semibold mb-4 text-gray-900">Динамика посещений по времени (уникальных)</h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold text-gray-900">Динамика посещений по времени (уникальных)</h2>
+            <button
+              @click="toggleAllChartDatasets"
+              class="px-3 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+            >
+              Показать всё / Скрыть всё
+            </button>
+          </div>
           <div class="bg-white rounded-lg shadow p-6">
             <div v-if="timelineData.length === 0" class="text-center py-12 text-gray-500">
               Нет данных для отображения
@@ -521,7 +746,12 @@ onMounted(() => {
                     </tr>
                     <tr v-else v-for="webinar in webinars" :key="webinar.id" class="border-b border-gray-100 hover:bg-gray-50">
                       <td class="px-6 py-4 text-sm text-gray-900">
-                        {{ webinar.name }}
+                        <router-link 
+                          :to="`/webinar/${webinar.id}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ webinar.name }}
+                        </router-link>
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ webinar.tags || '—' }}
@@ -575,14 +805,22 @@ onMounted(() => {
               <div style="max-height: 600px; overflow-y: auto;">
                 <table class="w-full table-fixed">
                   <colgroup>
+                    <col style="width: 15%;">
                     <col style="width: 20%;">
-                    <col style="width: 35%;">
-                    <col style="width: 45%;">
+                    <col style="width: 12%;">
+                    <col style="width: 23%;">
+                    <col style="width: 30%;">
                   </colgroup>
                   <thead class="sticky top-0 bg-white z-10">
                     <tr class="border-b border-gray-200">
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 bg-white">
                         ИНН
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 bg-white">
+                        Компания
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 bg-white">
+                        Телефон
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 bg-white">
                         Email
@@ -594,12 +832,12 @@ onMounted(() => {
                   </thead>
                   <tbody>
                     <tr v-if="uniqueUsers.length === 0 && userSearchQuery">
-                      <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет пользователей, соответствующих поиску
                       </td>
                     </tr>
                     <tr v-else-if="uniqueUsers.length === 0">
-                      <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет пользователей
                       </td>
                     </tr>
@@ -608,10 +846,21 @@ onMounted(() => {
                         {{ user.inn }}
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600 break-words overflow-hidden">
+                        {{ user.companyName || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600 overflow-hidden whitespace-nowrap">
+                        {{ user.phone || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600 break-words overflow-hidden">
                         <div v-if="user.emails" class="flex flex-col gap-1">
-                          <div v-for="(email, index) in formatEmails(user.emails)" :key="index">
+                          <router-link 
+                            v-for="(email, index) in formatEmails(user.emails)" 
+                            :key="index"
+                            :to="`/participant/${user.inn}`"
+                            class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
                             {{ email }}
-                          </div>
+                          </router-link>
                         </div>
                         <span v-else>—</span>
                       </td>
