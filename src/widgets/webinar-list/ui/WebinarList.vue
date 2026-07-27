@@ -98,6 +98,15 @@ const clearFilters = () => {
   applyFilters()
 }
 
+const formatDate = (dateStr: string) => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('ru-RU', { 
+    day: '2-digit', 
+    month: '2-digit', 
+    year: 'numeric' 
+  })
+}
+
 onMounted(() => {
   fetchWebinars()
 })
@@ -287,7 +296,7 @@ defineExpose({
                 {{ webinar.tags || '—' }}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                {{ webinar.date }}
+                {{ formatDate(webinar.date) }}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
                 <button

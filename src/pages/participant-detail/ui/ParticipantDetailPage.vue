@@ -6,10 +6,12 @@ const route = useRoute()
 const router = useRouter()
 
 interface ParticipantDetail {
-  inn: string
+  email: string
+  inn: string | null
   companyName: string | null
   phone: string | null
-  emails: string
+  firstName: string | null
+  lastName: string | null
   position: string | null
   isNew: boolean
 }
@@ -19,8 +21,10 @@ interface ParticipantWebinar {
   webinarName: string
   webinarDate: string
   tags: string
-  utmCampaign: string | null
+  utmSource: string | null
   utmMedium: string | null
+  utmCampaign: string | null
+  utmContent: string | null
 }
 
 const participant = ref<ParticipantDetail | null>(null)
@@ -31,7 +35,8 @@ const isLoading = ref(false)
 
 const fetchParticipantDetail = async () => {
   try {
-    const response = await fetch(`http://localhost:3000/api/participants/${route.params.inn}`)
+    const email = decodeURIComponent(route.params.email as string)
+    const response = await fetch(`http://localhost:3000/api/participants/${encodeURIComponent(email)}`)
     participant.value = await response.json()
   } catch (error) {
     console.error('Error fetching participant detail:', error)
@@ -40,7 +45,8 @@ const fetchParticipantDetail = async () => {
 
 const fetchParticipantWebinars = async () => {
   try {
-    const response = await fetch(`http://localhost:3000/api/participants/${route.params.inn}/webinars`)
+    const email = decodeURIComponent(route.params.email as string)
+    const response = await fetch(`http://localhost:3000/api/participants/${encodeURIComponent(email)}/webinars`)
     const data = await response.json()
     // Форматируем теги с пробелами после запятых
     allWebinars.value = data.map((w: ParticipantWebinar) => ({
@@ -86,6 +92,23 @@ const formatEmails = (emails: string | null) => {
   return emails.split(',').map(e => e.trim()).filter(e => e)
 }
 
+const getParticipantName = () => {
+  if (!participant.value) return 'Участник'
+  
+  const firstName = participant.value.firstName?.trim()
+  const lastName = participant.value.lastName?.trim()
+  
+  if (firstName && lastName) {
+    return `${firstName} ${lastName}`
+  } else if (firstName) {
+    return firstName
+  } else if (lastName) {
+    return lastName
+  } else {
+    return 'Участник'
+  }
+}
+
 const loadData = async () => {
   isLoading.value = true
   await Promise.all([
@@ -122,15 +145,38 @@ onMounted(() => {
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
-          <span v-if="participant" class="text-gray-900">Участник | ИНН компании: {{ participant.inn }}</span>
+          <span v-if="participant" class="text-gray-900">
+            {{ getParticipantName() }} | ИНН компании: 
+            <router-link 
+              v-if="participant.inn"
+              :to="`/company/${encodeURIComponent(participant.inn)}`"
+              class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+            >
+              {{ participant.inn }}
+            </router-link>
+            <span v-else>—</span>
+          </span>
         </nav>
       </div>
 
       <!-- Заголовок -->
       <div v-if="participant" class="mb-6 flex items-center gap-3">
-        <h2 class="text-xl font-semibold text-gray-900">Участник | ИНН компании: {{ participant.inn }}</h2>
+        <h2 class="text-xl font-semibold text-gray-900">
+          {{ getParticipantName() }} | ИНН компании: 
+          <router-link 
+            v-if="participant.inn"
+            :to="`/company/${encodeURIComponent(participant.inn)}`"
+            class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+          >
+            {{ participant.inn }}
+          </router-link>
+          <span v-else>—</span>
+        </h2>
         <span v-if="participant.isNew" class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
           Новый
+        </span>
+        <span v-else class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
+          Старый
         </span>
       </div>
 
@@ -145,23 +191,19 @@ onMounted(() => {
             <!-- Email -->
             <div class="bg-white rounded-lg shadow p-6">
               <div class="text-sm text-gray-600 mb-2">Email</div>
-              <div class="flex flex-col gap-1">
-                <div v-for="(email, index) in formatEmails(participant.emails)" :key="index" class="text-lg text-gray-900">
-                  {{ email }}
-                </div>
-              </div>
+              <div class="text-lg text-gray-900">{{ participant.email }}</div>
             </div>
 
             <!-- Компания -->
             <div class="bg-white rounded-lg shadow p-6">
               <div class="text-sm text-gray-600 mb-2">Компания</div>
-              <div class="text-lg text-gray-900">{{ participant.companyName || 'N' }}</div>
+              <div class="text-lg text-gray-900">{{ participant.companyName || '—' }}</div>
             </div>
 
             <!-- Должность -->
             <div class="bg-white rounded-lg shadow p-6">
               <div class="text-sm text-gray-600 mb-2">Должность</div>
-              <div class="text-lg text-gray-900">{{ participant.position || 'пример' }}</div>
+              <div class="text-lg text-gray-900">{{ participant.position || '—' }}</div>
             </div>
           </div>
         </section>
@@ -209,10 +251,16 @@ onMounted(() => {
                         Название
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
-                        utm_campaign
+                        utm_source
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
                         utm_medium
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        utm_campaign
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        utm_content
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
                         Теги
@@ -224,12 +272,12 @@ onMounted(() => {
                   </thead>
                   <tbody>
                     <tr v-if="webinars.length === 0 && searchQuery">
-                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="7" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет вебинаров, соответствующих поиску
                       </td>
                     </tr>
                     <tr v-else-if="webinars.length === 0">
-                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="7" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет посещенных вебинаров
                       </td>
                     </tr>
@@ -243,10 +291,16 @@ onMounted(() => {
                         </router-link>
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
-                        {{ webinar.utmCampaign || '—' }}
+                        {{ webinar.utmSource || '—' }}
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ webinar.utmMedium || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ webinar.utmCampaign || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ webinar.utmContent || '—' }}
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ webinar.tags || '—' }}

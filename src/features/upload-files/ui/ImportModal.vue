@@ -12,7 +12,6 @@ interface Tag {
   checked: boolean
 }
 
-const webinarName = ref('')
 const mainFile = ref<File | null>(null)
 const questionsFile = ref<File | null>(null)
 const chatFile = ref<File | null>(null)
@@ -80,7 +79,6 @@ const handleSubmit = async () => {
 
   try {
     const formData = new FormData()
-    formData.append('webinarName', webinarName.value)
     formData.append('mainFile', mainFile.value)
     
     if (questionsFile.value) {
@@ -133,19 +131,6 @@ const handleSubmit = async () => {
         </div>
 
         <form @submit.prevent="handleSubmit" class="space-y-6">
-          <!-- Название вебинара -->
-          <div>
-            <label class="block text-lg font-medium text-gray-900 mb-3">
-              Название вебинара
-            </label>
-            <input
-              v-model="webinarName"
-              type="text"
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-
           <!-- Основной лист -->
           <div>
             <label class="block text-lg font-medium text-gray-900 mb-3">

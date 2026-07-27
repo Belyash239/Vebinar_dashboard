@@ -6,7 +6,7 @@ const XLSX = require('xlsx')
 
 class ParserService {
   // Парсинг основного файла (2 листа: участники и сеансы входов)
-  async parseMainFile(filePath: string, webinarId: number): Promise<string | null> {
+  async parseMainFile(filePath: string, webinarId: number | null): Promise<{ webinarName: string | null, webinarDate: string | null }> {
     const workbook = XLSX.readFile(filePath)
     
     // Найти лист "Участники" (первый не "Общая информация")
@@ -25,10 +25,21 @@ class ParserService {
       console.log('Поля основного файла:', Object.keys(participantsData[0] as any).slice(0, 20))
     }
 
-    // Извлекаем дату проведения из первой строки
+    // Извлекаем название вебинара и дату проведения из первой строки
+    let webinarName: string | null = null
     let webinarDate: string | null = null
+    
     if (participantsData.length > 0) {
       const firstRow = participantsData[0] as any
+      
+      // Извлекаем название вебинара
+      const nameField = firstRow['Вебинар']
+      if (nameField && typeof nameField === 'string') {
+        webinarName = nameField.trim()
+        console.log(`📝 Название вебинара: ${webinarName}`)
+      }
+      
+      // Извлекаем дату
       const dateField = firstRow['Дата проведения']
       
       if (dateField) {
@@ -48,6 +59,11 @@ class ParserService {
         }
         console.log(`📅 Дата проведения вебинара: ${webinarDate}`)
       }
+    }
+    
+    // Если webinarId не передан, это первый проход - возвращаем только название и дату
+    if (webinarId === null) {
+      return { webinarName, webinarDate }
     }
 
     let processedCount = 0
@@ -198,7 +214,7 @@ class ParserService {
       console.log(`⚠️ Пропущено записей с некорректным/отсутствующим ИНН: ${skippedInnCount}`)
     }
     
-    return webinarDate
+    return { webinarName, webinarDate }
   }
 
   // Парсинг файла с вопросами

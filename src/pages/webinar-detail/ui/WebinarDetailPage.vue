@@ -256,7 +256,18 @@ onMounted(() => {
 
             <!-- Конверсия -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Конверсия</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Конверсия</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Конверсия из регистрации в посещение
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-4xl font-bold text-gray-900">{{ webinar.conversion }}%</div>
             </div>
           </div>
@@ -338,7 +349,12 @@ onMounted(() => {
                     </tr>
                     <tr v-else v-for="user in users" :key="user.inn" class="border-b border-gray-100 hover:bg-gray-50">
                       <td class="px-6 py-4 text-sm text-gray-900 break-words overflow-hidden">
-                        {{ user.inn }}
+                        <router-link 
+                          :to="`/company/${encodeURIComponent(user.inn)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ user.inn }}
+                        </router-link>
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600 break-words overflow-hidden">
                         {{ user.chatName || '—' }}
@@ -348,7 +364,7 @@ onMounted(() => {
                           <router-link 
                             v-for="(email, index) in formatEmails(user.emails)" 
                             :key="index"
-                            :to="`/participant/${user.inn}`"
+                            :to="`/participant/${encodeURIComponent(email)}`"
                             class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                           >
                             {{ email }}

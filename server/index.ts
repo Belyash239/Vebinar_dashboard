@@ -107,11 +107,11 @@ app.get('/api/webinars/:id/utm-stats', (req, res) => {
   }
 })
 
-// Получить детали участника по ИНН
-app.get('/api/participants/:inn', (req, res) => {
+// Получить детали участника по email
+app.get('/api/participants/:email', (req, res) => {
   try {
-    const inn = req.params.inn
-    const participant = databaseService.getParticipantDetail(inn)
+    const email = decodeURIComponent(req.params.email)
+    const participant = databaseService.getParticipantDetail(email)
     
     if (!participant) {
       return res.status(404).json({ error: 'Participant not found' })
@@ -125,14 +125,55 @@ app.get('/api/participants/:inn', (req, res) => {
 })
 
 // Получить вебинары участника
-app.get('/api/participants/:inn/webinars', (req, res) => {
+app.get('/api/participants/:email/webinars', (req, res) => {
   try {
-    const inn = req.params.inn
-    const webinars = databaseService.getParticipantWebinars(inn)
+    const email = decodeURIComponent(req.params.email)
+    const webinars = databaseService.getParticipantWebinars(email)
     res.json(webinars)
   } catch (error) {
     console.error('Error fetching participant webinars:', error)
     res.status(500).json({ error: 'Failed to fetch participant webinars' })
+  }
+})
+
+// Получить детали компании по ИНН
+app.get('/api/companies/:inn', (req, res) => {
+  try {
+    const inn = decodeURIComponent(req.params.inn)
+    const company = databaseService.getCompanyDetail(inn)
+    
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+    
+    res.json(company)
+  } catch (error) {
+    console.error('Error fetching company detail:', error)
+    res.status(500).json({ error: 'Failed to fetch company detail' })
+  }
+})
+
+// Получить вебинары компании
+app.get('/api/companies/:inn/webinars', (req, res) => {
+  try {
+    const inn = decodeURIComponent(req.params.inn)
+    const webinars = databaseService.getCompanyWebinars(inn)
+    res.json(webinars)
+  } catch (error) {
+    console.error('Error fetching company webinars:', error)
+    res.status(500).json({ error: 'Failed to fetch company webinars' })
+  }
+})
+
+// Получить участников компании
+app.get('/api/companies/:inn/participants', (req, res) => {
+  try {
+    const inn = decodeURIComponent(req.params.inn)
+    const participants = databaseService.getCompanyParticipants(inn)
+    res.json(participants)
+  } catch (error) {
+    console.error('Error fetching company participants:', error)
+    res.status(500).json({ error: 'Failed to fetch company participants' })
   }
 })
 
@@ -276,15 +317,30 @@ app.post('/api/upload',
     
     try {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] }
-      const { webinarName, tags } = req.body
+      const { tags } = req.body
 
-      if (!webinarName || !files.mainFile) {
-        return res.status(400).json({ error: 'Webinar name and main file are required' })
+      if (!files.mainFile) {
+        return res.status(400).json({ error: 'Main file is required' })
       }
 
-      // Создать вебинар с временной датой
-      const tempDate = new Date().toISOString().split('T')[0]
-      webinarId = databaseService.createWebinar(webinarName, tempDate) as number
+      // Парсить основной файл и получить название вебинара и дату
+      const mainFilePath = files.mainFile[0].path
+      const { webinarName, webinarDate } = await parserService.parseMainFile(mainFilePath, null)
+      
+      if (!webinarName) {
+        return res.status(400).json({ error: 'Webinar name not found in the main file' })
+      }
+
+      // Формируем название с датой: "Название_ДД.ММ.ГГГГ"
+      let finalWebinarName = webinarName
+      if (webinarDate) {
+        const date = new Date(webinarDate)
+        const formattedDate = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`
+        finalWebinarName = `${webinarName}_${formattedDate}`
+      }
+
+      // Создать вебинар с именем из файла и датой
+      webinarId = databaseService.createWebinar(finalWebinarName, webinarDate || new Date().toISOString().split('T')[0]) as number
 
       // Добавить теги
       if (tags) {
@@ -297,14 +353,8 @@ app.post('/api/upload',
         }
       }
 
-      // Парсить основной файл и получить дату проведения
-      const mainFilePath = files.mainFile[0].path
-      const webinarDate = await parserService.parseMainFile(mainFilePath, webinarId)
-      
-      // Обновить дату вебинара, если она была найдена в файле
-      if (webinarDate) {
-        databaseService.updateWebinarDate(webinarId, webinarDate)
-      }
+      // Повторно парсить основной файл с ID вебинара
+      await parserService.parseMainFile(mainFilePath, webinarId)
 
       if (files.questionsFile) {
         const questionsFilePath = files.questionsFile[0].path
@@ -324,6 +374,7 @@ app.post('/api/upload',
       res.json({ 
         success: true, 
         webinarId,
+        webinarName: finalWebinarName,
         webinarDate,
         message: 'Files uploaded and processed successfully' 
       })

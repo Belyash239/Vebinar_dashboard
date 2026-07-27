@@ -843,7 +843,12 @@ onMounted(() => {
                     </tr>
                     <tr v-else v-for="user in uniqueUsers" :key="user.inn" class="border-b border-gray-100 hover:bg-gray-50">
                       <td class="px-6 py-4 text-sm text-gray-900 break-words overflow-hidden">
-                        {{ user.inn }}
+                        <router-link 
+                          :to="`/company/${encodeURIComponent(user.inn)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ user.inn }}
+                        </router-link>
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600 break-words overflow-hidden">
                         {{ user.companyName || '—' }}
@@ -856,7 +861,7 @@ onMounted(() => {
                           <router-link 
                             v-for="(email, index) in formatEmails(user.emails)" 
                             :key="index"
-                            :to="`/participant/${user.inn}`"
+                            :to="`/participant/${encodeURIComponent(email)}`"
                             class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                           >
                             {{ email }}

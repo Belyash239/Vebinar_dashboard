@@ -312,46 +312,44 @@ class DatabaseService {
   }
 
   // Получить детальную информацию об участнике по ИНН
-  getParticipantDetail(inn: string) {
+  getParticipantDetail(email: string) {
     const query = `
       SELECT 
+        e.Email as email,
         c.ИНН_компании as inn,
         c.Название as companyName,
         u.Номер_телефона as phone,
-        GROUP_CONCAT(DISTINCT e.Email) as emails,
+        u.Имя as firstName,
+        u.Фамилия as lastName,
         (SELECT uw.Должность 
          FROM "Участники-Вебинары" uw 
-         WHERE uw.ID_участника = u.ID_участника 
+         WHERE uw.ID_участника = e.ID_участника 
          AND uw.Должность IS NOT NULL 
          LIMIT 1) as position,
         (SELECT COUNT(*) FROM "Участники-Вебинары" uw2 
-         WHERE uw2.ID_участника = u.ID_участника) as totalWebinars,
+         WHERE uw2.ID_участника = e.ID_участника) as totalWebinars,
         (SELECT MIN(w.Дата) 
          FROM "Участники-Вебинары" uw3 
          INNER JOIN Вебинары w ON uw3.ID_вебинара = w.ID_вебинара 
-         WHERE uw3.ID_участника = u.ID_участника) as firstWebinarDate
-      FROM Участники u
+         WHERE uw3.ID_участника = e.ID_участника) as firstWebinarDate
+      FROM Email e
+      INNER JOIN Участники u ON e.ID_участника = u.ID_участника
       INNER JOIN Компания c ON u.ID_компании = c.ID_компании
-      INNER JOIN Email e ON u.ID_участника = e.ID_участника
-      WHERE c.ИНН_компании = ?
-      GROUP BY u.ID_участника, c.ИНН_компании, c.Название, u.Номер_телефона
+      WHERE e.Email = ?
       LIMIT 1
     `
-    const result = this.execQuery(query, [inn])
+    const result = this.execQuery(query, [email])
     if (result.length === 0) return null
     
     const participant = result[0]
-    // Проверяем, является ли участник новым (посетил первый вебинар в последние 30 дней)
-    const firstDate = participant.firstWebinarDate ? new Date(participant.firstWebinarDate) : null
-    const now = new Date()
-    const daysDiff = firstDate ? (now.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24) : 999
-    participant.isNew = daysDiff <= 30
+    // Участник новый, если посетил только 1 вебинар
+    participant.isNew = participant.totalWebinars === 1
     
     return participant
   }
 
   // Получить список вебинаров, которые посетил участник
-  getParticipantWebinars(inn: string) {
+  getParticipantWebinars(email: string) {
     const query = `
       SELECT 
         w.ID_вебинара as webinarId,
@@ -363,22 +361,23 @@ class DatabaseService {
           INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
           WHERE wt2.ID_мероприятия = w.ID_вебинара
         ) as tags,
+        uw.utm_source as utmSource,
+        uw.utm_medium as utmMedium,
         uw.utm_campaign as utmCampaign,
-        uw.utm_medium as utmMedium
+        uw.utm_content as utmContent
       FROM "Участники-Вебинары" uw
-      INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
-      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Email e ON uw.ID_участника = e.ID_участника
       INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
-      WHERE c.ИНН_компании = ?
+      WHERE e.Email = ?
         AND (
           CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
           CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
           CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
         ) >= 1
-      GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_campaign, uw.utm_medium
+      GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_source, uw.utm_medium, uw.utm_campaign, uw.utm_content
       ORDER BY w.Дата DESC
     `
-    return this.execQuery(query, [inn])
+    return this.execQuery(query, [email])
   }
 
   // Получить последние сообщения чата
@@ -798,6 +797,140 @@ class DatabaseService {
       ORDER BY w.Дата ASC
     `
     return this.execQuery(query)
+  }
+
+  // Получить детали компании по ИНН
+  getCompanyDetail(inn: string) {
+    const query = `
+      SELECT 
+        c.ИНН_компании as inn,
+        c.Название as companyName,
+        (SELECT w.ID_вебинара
+         FROM "Участники-Вебинары" uw 
+         INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара 
+         INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+         WHERE u.ID_компании = c.ID_компании
+           AND (
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1
+         ORDER BY w.Дата ASC
+         LIMIT 1) as firstWebinarId,
+        (SELECT w.Название
+         FROM "Участники-Вебинары" uw 
+         INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара 
+         INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+         WHERE u.ID_компании = c.ID_компании
+           AND (
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1
+         ORDER BY w.Дата ASC
+         LIMIT 1) as firstWebinar,
+        ROUND((SELECT AVG(uw.Присутствие_от_общей_длительности)
+         FROM "Участники-Вебинары" uw
+         INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+         WHERE u.ID_компании = c.ID_компании
+           AND (
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1), 2) as avgRetention,
+        (SELECT COUNT(DISTINCT uw.ID_вебинара)
+         FROM "Участники-Вебинары" uw
+         INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+         WHERE u.ID_компании = c.ID_компании
+           AND (
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1) as totalWebinars
+      FROM Компания c
+      WHERE c.ИНН_компании = ?
+      LIMIT 1
+    `
+    const result = this.execQuery(query, [inn])
+    if (result.length === 0) return null
+    
+    const company = result[0]
+    
+    // Компания новая, если была только на 1 вебинаре
+    company.isNew = company.totalWebinars === 1
+    
+    // Получаем интересующие продукты (из тегов вебинаров, исключая служебные теги)
+    const productsQuery = `
+      SELECT DISTINCT t.Название_тега as product
+      FROM "Участники-Вебинары" uw
+      INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+      INNER JOIN "Вебинары-Теги" wt ON uw.ID_вебинара = wt.ID_мероприятия
+      INNER JOIN Тег t ON wt.ID_тега = t.ID_тега
+      WHERE u.ID_компании = (SELECT ID_компании FROM Компания WHERE ИНН_компании = ?)
+        AND t.Название_тега NOT IN ('для клиентов', 'для партнёров')
+        AND (
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+      ORDER BY t.Название_тега
+    `
+    const products = this.execQuery(productsQuery, [inn])
+    company.interestedProducts = products.map((p: any) => p.product)
+    
+    return company
+  }
+
+  // Получить вебинары компании
+  getCompanyWebinars(inn: string) {
+    const query = `
+      SELECT 
+        w.ID_вебинара as webinarId,
+        w.Название as webinarName,
+        w.Дата as webinarDate,
+        (
+          SELECT GROUP_CONCAT(DISTINCT Название_тега)
+          FROM "Вебинары-Теги" wt2
+          INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
+          WHERE wt2.ID_мероприятия = w.ID_вебинара
+        ) as tags,
+        uw.utm_campaign as utmCampaign,
+        uw.utm_medium as utmMedium
+      FROM "Участники-Вебинары" uw
+      INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
+      WHERE c.ИНН_компании = ?
+        AND (
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+      GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_campaign, uw.utm_medium
+      ORDER BY w.Дата DESC
+    `
+    return this.execQuery(query, [inn])
+  }
+
+  // Получить участников компании
+  getCompanyParticipants(inn: string) {
+    const query = `
+      SELECT DISTINCT
+        e.Email as email,
+        u.Имя as firstName,
+        u.Фамилия as lastName,
+        (SELECT uw.Должность 
+         FROM "Участники-Вебинары" uw 
+         WHERE uw.ID_участника = u.ID_участника 
+         AND uw.Должность IS NOT NULL 
+         LIMIT 1) as position
+      FROM Участники u
+      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Email e ON u.ID_участника = e.ID_участника
+      WHERE c.ИНН_компании = ?
+      ORDER BY e.Email
+    `
+    return this.execQuery(query, [inn])
   }
 }
 
