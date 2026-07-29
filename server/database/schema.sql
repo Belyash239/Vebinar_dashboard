@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS Участники (
   Имя TEXT,
   Фамилия TEXT,
   Номер_телефона TEXT,
+  Должность TEXT,
   FOREIGN KEY (ID_компании) REFERENCES Компания(ID_компании)
 );
 
@@ -51,7 +52,6 @@ CREATE TABLE IF NOT EXISTS "Участники-Вебинары" (
   ID_вебинара INTEGER,
   Имя_в_чате TEXT,
   Компания TEXT,
-  Должность TEXT,
   Статус_регистрации TEXT,
   Дата_регистрации TEXT,
   Источники TEXT,
@@ -105,9 +105,37 @@ CREATE TABLE IF NOT EXISTS Вопросы (
   FOREIGN KEY (ID_email) REFERENCES Email(ID_email)
 );
 
+-- Таблица «Опросы»
+CREATE TABLE IF NOT EXISTS Опросы (
+  ID_вопроса INTEGER PRIMARY KEY AUTOINCREMENT,
+  ID_опроса INTEGER NOT NULL,
+  Вопрос TEXT
+);
+
+-- Таблица «Вебинары-Опросы»
+CREATE TABLE IF NOT EXISTS "Вебинары-Опросы" (
+  ID_вебинара INTEGER,
+  ID_опроса INTEGER,
+  PRIMARY KEY (ID_вебинара, ID_опроса),
+  FOREIGN KEY (ID_вебинара) REFERENCES Вебинары(ID_вебинара)
+);
+
+-- Таблица «Опросы-Email»
+CREATE TABLE IF NOT EXISTS "Опросы-Email" (
+  ID_вопроса INTEGER,
+  ID_email INTEGER,
+  Ответ TEXT,
+  PRIMARY KEY (ID_вопроса, ID_email),
+  FOREIGN KEY (ID_вопроса) REFERENCES Опросы(ID_вопроса),
+  FOREIGN KEY (ID_email) REFERENCES Email(ID_email)
+);
+
 -- Индексы для оптимизации запросов
 CREATE INDEX IF NOT EXISTS idx_email ON Email(Email);
 CREATE INDEX IF NOT EXISTS idx_webinar_date ON Вебинары(Дата);
 CREATE INDEX IF NOT EXISTS idx_participant_webinar ON "Участники-Вебинары"(ID_участника, ID_вебинара);
 CREATE INDEX IF NOT EXISTS idx_chat_webinar ON Чат(ID_вебинара, Время);
 CREATE INDEX IF NOT EXISTS idx_questions_webinar ON Вопросы(ID_вебинара);
+CREATE INDEX IF NOT EXISTS idx_surveys_poll ON Опросы(ID_опроса);
+CREATE INDEX IF NOT EXISTS idx_webinar_surveys ON "Вебинары-Опросы"(ID_вебинара, ID_опроса);
+CREATE INDEX IF NOT EXISTS idx_survey_answers ON "Опросы-Email"(ID_вопроса, ID_email);

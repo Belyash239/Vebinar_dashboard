@@ -4,6 +4,7 @@ import { ref, onMounted, computed } from 'vue'
 const emit = defineEmits<{
   openImport: []
   openExport: []
+  openSurveyImport: []
   refresh: []
 }>()
 
@@ -148,6 +149,14 @@ defineExpose({
         <h2 class="text-lg font-medium text-gray-900">Список импортированных вебинаров</h2>
         
         <div class="flex items-center gap-4">
+          <button
+            @click="emit('openSurveyImport')"
+            class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium"
+            title="Импорт опросов"
+          >
+            Импорт опросов
+          </button>
+
           <button
             @click="emit('openExport')"
             class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium"

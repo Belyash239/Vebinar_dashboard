@@ -30,14 +30,27 @@ interface CompanyParticipant {
   position: string | null
 }
 
+interface CompanySurveyAnswer {
+  webinarId: number
+  webinarName: string
+  webinarDate: string
+  participantEmail: string
+  firstName: string | null
+  lastName: string | null
+  question: string
+  answer: string
+}
+
 const company = ref<CompanyDetail | null>(null)
 const webinars = ref<CompanyWebinar[]>([])
 const allWebinars = ref<CompanyWebinar[]>([])
 const participants = ref<CompanyParticipant[]>([])
 const allParticipants = ref<CompanyParticipant[]>([])
+const surveyAnswers = ref<CompanySurveyAnswer[]>([])
 const webinarSearchQuery = ref('')
 const participantSearchQuery = ref('')
 const isLoading = ref(false)
+const isSurveyAnswersExpanded = ref(true)
 
 const fetchCompanyDetail = async () => {
   try {
@@ -73,6 +86,16 @@ const fetchCompanyParticipants = async () => {
     applyParticipantFilters()
   } catch (error) {
     console.error('Error fetching company participants:', error)
+  }
+}
+
+const fetchCompanySurveyAnswers = async () => {
+  try {
+    const inn = decodeURIComponent(route.params.inn as string)
+    const response = await fetch(`http://localhost:3000/api/companies/${encodeURIComponent(inn)}/survey-answers`)
+    surveyAnswers.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching company survey answers:', error)
   }
 }
 
@@ -140,12 +163,28 @@ const getParticipantName = (participant: CompanyParticipant) => {
   }
 }
 
+const getParticipantNameFromAnswer = (answer: CompanySurveyAnswer) => {
+  const firstName = answer.firstName?.trim()
+  const lastName = answer.lastName?.trim()
+  
+  if (firstName && lastName) {
+    return `${firstName} ${lastName}`
+  } else if (firstName) {
+    return firstName
+  } else if (lastName) {
+    return lastName
+  } else {
+    return 'Участник'
+  }
+}
+
 const loadData = async () => {
   isLoading.value = true
   await Promise.all([
     fetchCompanyDetail(),
     fetchCompanyWebinars(),
-    fetchCompanyParticipants()
+    fetchCompanyParticipants(),
+    fetchCompanySurveyAnswers()
   ])
   isLoading.value = false
 }
@@ -326,7 +365,7 @@ onMounted(() => {
         </section>
 
         <!-- Участники компании -->
-        <section>
+        <section class="mb-8">
           <div class="bg-white rounded-lg shadow">
             <div class="p-6">
               <div class="flex items-center justify-between mb-6">
@@ -406,6 +445,86 @@ onMounted(() => {
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ participant.position || '—' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ответы на опросы -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-900">
+                  Ответы на опросы
+                  <span class="ml-2 text-sm font-normal text-gray-500">({{ surveyAnswers.length }})</span>
+                </h2>
+                <button
+                  @click="isSurveyAnswersExpanded = !isSurveyAnswersExpanded"
+                  class="text-gray-500 hover:text-gray-700"
+                >
+                  <svg 
+                    class="w-6 h-6 transition-transform"
+                    :class="{ 'rotate-180': !isSurveyAnswersExpanded }"
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div v-show="isSurveyAnswersExpanded" class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="min-w-full">
+                  <thead class="sticky top-0 bg-white">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вебинар
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Участник
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вопрос
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Ответ
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="surveyAnswers.length === 0">
+                      <td colspan="4" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет ответов на опросы
+                      </td>
+                    </tr>
+                    <tr v-else v-for="(answer, index) in surveyAnswers" :key="index" class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/webinar/${answer.webinarId}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ answer.webinarName }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/participant/${encodeURIComponent(answer.participantEmail)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ getParticipantNameFromAnswer(answer) }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        {{ answer.question }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ answer.answer }}
                       </td>
                     </tr>
                   </tbody>

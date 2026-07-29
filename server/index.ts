@@ -136,6 +136,42 @@ app.get('/api/participants/:email/webinars', (req, res) => {
   }
 })
 
+// Получить чат участника
+app.get('/api/participants/:email/chat', (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email)
+    const chat = databaseService.getParticipantChat(email)
+    res.json(chat)
+  } catch (error) {
+    console.error('Error fetching participant chat:', error)
+    res.status(500).json({ error: 'Failed to fetch participant chat' })
+  }
+})
+
+// Получить вопросы участника
+app.get('/api/participants/:email/questions', (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email)
+    const questions = databaseService.getParticipantQuestions(email)
+    res.json(questions)
+  } catch (error) {
+    console.error('Error fetching participant questions:', error)
+    res.status(500).json({ error: 'Failed to fetch participant questions' })
+  }
+})
+
+// Получить ответы на опросы участника
+app.get('/api/participants/:email/survey-answers', (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email)
+    const answers = databaseService.getParticipantSurveyAnswers(email)
+    res.json(answers)
+  } catch (error) {
+    console.error('Error fetching participant survey answers:', error)
+    res.status(500).json({ error: 'Failed to fetch participant survey answers' })
+  }
+})
+
 // Получить детали компании по ИНН
 app.get('/api/companies/:inn', (req, res) => {
   try {
@@ -174,6 +210,18 @@ app.get('/api/companies/:inn/participants', (req, res) => {
   } catch (error) {
     console.error('Error fetching company participants:', error)
     res.status(500).json({ error: 'Failed to fetch company participants' })
+  }
+})
+
+// Получить ответы на опросы компании
+app.get('/api/companies/:inn/survey-answers', (req, res) => {
+  try {
+    const inn = decodeURIComponent(req.params.inn)
+    const answers = databaseService.getCompanySurveyAnswers(inn)
+    res.json(answers)
+  } catch (error) {
+    console.error('Error fetching company survey answers:', error)
+    res.status(500).json({ error: 'Failed to fetch company survey answers' })
   }
 })
 
@@ -261,6 +309,39 @@ app.get('/api/tags', (req, res) => {
   }
 })
 
+// Получить все опросы
+app.get('/api/surveys', (req, res) => {
+  try {
+    const surveys = databaseService.getAllSurveys()
+    res.json(surveys)
+  } catch (error) {
+    console.error('Error fetching surveys:', error)
+    res.status(500).json({ error: 'Failed to fetch surveys' })
+  }
+})
+
+// Удалить опрос
+app.delete('/api/surveys/:id', (req, res) => {
+  try {
+    const surveyId = parseInt(req.params.id)
+    
+    if (isNaN(surveyId)) {
+      return res.status(400).json({ error: 'Invalid survey ID' })
+    }
+
+    databaseService.deleteSurvey(surveyId)
+    databaseService.saveDatabase()
+    
+    res.json({ 
+      success: true, 
+      message: 'Survey deleted successfully' 
+    })
+  } catch (error) {
+    console.error('Error deleting survey:', error)
+    res.status(500).json({ error: 'Failed to delete survey' })
+  }
+})
+
 // Получить данные для графика новых клиентов
 app.get('/api/new-clients-timeline', (req, res) => {
   try {
@@ -310,14 +391,15 @@ app.post('/api/upload',
   upload.fields([
     { name: 'mainFile', maxCount: 1 },
     { name: 'questionsFile', maxCount: 1 },
-    { name: 'chatFile', maxCount: 1 }
+    { name: 'chatFile', maxCount: 1 },
+    { name: 'surveyFile', maxCount: 1 }
   ]),
   async (req, res) => {
     let webinarId: number | null = null
     
     try {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] }
-      const { tags } = req.body
+      const { tags, importPositions } = req.body
 
       if (!files.mainFile) {
         return res.status(400).json({ error: 'Main file is required' })
@@ -366,6 +448,13 @@ app.post('/api/upload',
         await parserService.parseChatFile(chatFilePath, webinarId)
       }
 
+      // Парсить файл опросов если загружен
+      if (files.surveyFile) {
+        const surveyFilePath = files.surveyFile[0].path
+        const shouldImportPositions = importPositions === 'true'
+        await parserService.parseSurveyFile(surveyFilePath, webinarId, shouldImportPositions)
+      }
+
       // Сохраняем БД один раз в конце
       console.log('Сохранение данных в БД...')
       databaseService.saveDatabase()
@@ -392,6 +481,47 @@ app.post('/api/upload',
       
       res.status(500).json({ 
         error: 'Failed to upload files',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
+// Загрузить файл с опросами
+app.post('/api/upload-survey', 
+  upload.single('surveyFile'),
+  async (req, res) => {
+    try {
+      const file = req.file
+      const { webinarId, importPositions } = req.body
+
+      if (!file) {
+        return res.status(400).json({ error: 'Survey file is required' })
+      }
+
+      // Парсить файл с опросами
+      const surveyFilePath = file.path
+      const shouldImportPositions = importPositions === 'true'
+      
+      // webinarId может быть пустым (опциональная привязка)
+      const webinarIdNum = webinarId && webinarId.trim() !== '' ? parseInt(webinarId) : null
+      
+      await parserService.parseSurveyFile(surveyFilePath, webinarIdNum, shouldImportPositions)
+
+      // Сохраняем БД
+      console.log('Сохранение опросов в БД...')
+      databaseService.saveDatabase()
+      console.log('✅ Импорт опросов завершён успешно')
+
+      res.json({ 
+        success: true,
+        message: 'Survey file uploaded and processed successfully' 
+      })
+    } catch (error) {
+      console.error('Error uploading survey file:', error)
+      
+      res.status(500).json({ 
+        error: 'Failed to upload survey file',
         details: error instanceof Error ? error.message : 'Unknown error'
       })
     }

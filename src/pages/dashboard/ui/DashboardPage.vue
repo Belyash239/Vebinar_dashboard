@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import WebinarList from '@/widgets/webinar-list/ui/WebinarList.vue'
+import SurveyList from '@/widgets/survey-list/ui/SurveyList.vue'
 import ImportModal from '@/features/upload-files/ui/ImportModal.vue'
+import SurveyImportModal from '@/features/upload-files/ui/SurveyImportModal.vue'
 
 interface Tag {
   id: number
@@ -10,7 +12,11 @@ interface Tag {
 
 const showImportModal = ref(false)
 const showExportModal = ref(false)
+const showSurveyImportModal = ref(false)
+const showSuccessNotification = ref(false)
+const successMessage = ref('')
 const webinarListRef = ref<InstanceType<typeof WebinarList> | null>(null)
+const surveyListRef = ref<InstanceType<typeof SurveyList> | null>(null)
 const selectedTags = ref<number[]>([])
 const tags = ref<Tag[]>([])
 const isExporting = ref(false)
@@ -25,6 +31,35 @@ const closeImportModal = () => {
 
 const handleImportSuccess = () => {
   webinarListRef.value?.fetchWebinars()
+  surveyListRef.value?.fetchSurveys()  // Обновляем список опросов на случай если был загружен файл опросов
+  successMessage.value = 'Вебинар успешно импортирован!'
+  showSuccessNotification.value = true
+  
+  // Автоматически скрыть уведомление через 3 секунды
+  setTimeout(() => {
+    showSuccessNotification.value = false
+  }, 3000)
+}
+
+const openSurveyImportModal = () => {
+  showSurveyImportModal.value = true
+}
+
+const closeSurveyImportModal = () => {
+  showSurveyImportModal.value = false
+}
+
+const handleSurveyImportSuccess = () => {
+  // Обновляем список опросов
+  surveyListRef.value?.fetchSurveys()
+  
+  successMessage.value = 'Опросы успешно импортированы!'
+  showSuccessNotification.value = true
+  
+  // Автоматически скрыть уведомление через 3 секунды
+  setTimeout(() => {
+    showSuccessNotification.value = false
+  }, 3000)
 }
 
 const openExportModal = () => {
@@ -132,7 +167,13 @@ const handleExport = async () => {
         ref="webinarListRef"
         @open-import="openImportModal"
         @open-export="openExportModal"
+        @open-survey-import="openSurveyImportModal"
       />
+
+      <!-- Список опросов -->
+      <div class="mt-6">
+        <SurveyList ref="surveyListRef" />
+      </div>
     </main>
 
     <ImportModal 
@@ -140,6 +181,44 @@ const handleExport = async () => {
       @close="closeImportModal"
       @success="handleImportSuccess"
     />
+
+    <SurveyImportModal 
+      v-if="showSurveyImportModal" 
+      @close="closeSurveyImportModal"
+      @success="handleSurveyImportSuccess"
+    />
+
+    <!-- Success Notification -->
+    <Transition
+      enter-active-class="transition ease-out duration-300"
+      enter-from-class="opacity-0 translate-y-2"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition ease-in duration-200"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 translate-y-2"
+    >
+      <div 
+        v-if="showSuccessNotification"
+        class="fixed top-4 right-4 z-50 bg-green-50 border border-green-200 rounded-lg shadow-lg p-4 flex items-center gap-3 max-w-md"
+      >
+        <div class="flex-shrink-0">
+          <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <p class="text-sm font-medium text-green-900">{{ successMessage }}</p>
+        </div>
+        <button
+          @click="showSuccessNotification = false"
+          class="flex-shrink-0 text-green-600 hover:text-green-800"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </Transition>
 
     <!-- Export Modal -->
     <div v-if="showExportModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

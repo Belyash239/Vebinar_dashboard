@@ -27,11 +27,45 @@ interface ParticipantWebinar {
   utmContent: string | null
 }
 
+interface ChatMessage {
+  webinarId: number
+  webinarName: string
+  webinarDate: string
+  time: string
+  message: string
+}
+
+interface Question {
+  webinarId: number
+  webinarName: string
+  webinarDate: string
+  question: string
+  status: string | null
+  responder: string | null
+  answer: string | null
+}
+
+interface SurveyAnswer {
+  webinarId: number
+  webinarName: string
+  webinarDate: string
+  question: string
+  answer: string
+}
+
 const participant = ref<ParticipantDetail | null>(null)
 const webinars = ref<ParticipantWebinar[]>([])
 const allWebinars = ref<ParticipantWebinar[]>([])
+const chatMessages = ref<ChatMessage[]>([])
+const questions = ref<Question[]>([])
+const surveyAnswers = ref<SurveyAnswer[]>([])
 const searchQuery = ref('')
 const isLoading = ref(false)
+
+// Состояния сворачивания
+const isChatExpanded = ref(true)
+const isQuestionsExpanded = ref(true)
+const isSurveyAnswersExpanded = ref(true)
 
 const fetchParticipantDetail = async () => {
   try {
@@ -56,6 +90,36 @@ const fetchParticipantWebinars = async () => {
     applyFilters()
   } catch (error) {
     console.error('Error fetching participant webinars:', error)
+  }
+}
+
+const fetchParticipantChat = async () => {
+  try {
+    const email = decodeURIComponent(route.params.email as string)
+    const response = await fetch(`http://localhost:3000/api/participants/${encodeURIComponent(email)}/chat`)
+    chatMessages.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching participant chat:', error)
+  }
+}
+
+const fetchParticipantQuestions = async () => {
+  try {
+    const email = decodeURIComponent(route.params.email as string)
+    const response = await fetch(`http://localhost:3000/api/participants/${encodeURIComponent(email)}/questions`)
+    questions.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching participant questions:', error)
+  }
+}
+
+const fetchParticipantSurveyAnswers = async () => {
+  try {
+    const email = decodeURIComponent(route.params.email as string)
+    const response = await fetch(`http://localhost:3000/api/participants/${encodeURIComponent(email)}/survey-answers`)
+    surveyAnswers.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching participant survey answers:', error)
   }
 }
 
@@ -113,7 +177,10 @@ const loadData = async () => {
   isLoading.value = true
   await Promise.all([
     fetchParticipantDetail(),
-    fetchParticipantWebinars()
+    fetchParticipantWebinars(),
+    fetchParticipantChat(),
+    fetchParticipantQuestions(),
+    fetchParticipantSurveyAnswers()
   ])
   isLoading.value = false
 }
@@ -209,7 +276,7 @@ onMounted(() => {
         </section>
 
         <!-- Список посещенных вебинаров -->
-        <section>
+        <section class="mb-8">
           <div class="bg-white rounded-lg shadow">
             <div class="p-6">
               <div class="flex items-center justify-between mb-6">
@@ -307,6 +374,219 @@ onMounted(() => {
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ formatDate(webinar.webinarDate) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Сообщения в чате -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-900">
+                  Сообщения в чате
+                  <span class="ml-2 text-sm font-normal text-gray-500">({{ chatMessages.length }})</span>
+                </h2>
+                <button
+                  @click="isChatExpanded = !isChatExpanded"
+                  class="text-gray-500 hover:text-gray-700"
+                >
+                  <svg 
+                    class="w-6 h-6 transition-transform"
+                    :class="{ 'rotate-180': !isChatExpanded }"
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div v-show="isChatExpanded" class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="min-w-full">
+                  <thead class="sticky top-0 bg-white">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вебинар
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Время
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Сообщение
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="chatMessages.length === 0">
+                      <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет сообщений в чате
+                      </td>
+                    </tr>
+                    <tr v-else v-for="(message, index) in chatMessages" :key="index" class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/webinar/${message.webinarId}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ message.webinarName }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ message.time || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        {{ message.message }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Вопросы -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-900">
+                  Вопросы
+                  <span class="ml-2 text-sm font-normal text-gray-500">({{ questions.length }})</span>
+                </h2>
+                <button
+                  @click="isQuestionsExpanded = !isQuestionsExpanded"
+                  class="text-gray-500 hover:text-gray-700"
+                >
+                  <svg 
+                    class="w-6 h-6 transition-transform"
+                    :class="{ 'rotate-180': !isQuestionsExpanded }"
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div v-show="isQuestionsExpanded" class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="min-w-full">
+                  <thead class="sticky top-0 bg-white">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вебинар
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вопрос
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Статус
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Ответ
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="questions.length === 0">
+                      <td colspan="4" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет вопросов
+                      </td>
+                    </tr>
+                    <tr v-else v-for="(question, index) in questions" :key="index" class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/webinar/${question.webinarId}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ question.webinarName }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        {{ question.question }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ question.status || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ question.answer || '—' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ответы на опросы -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-900">
+                  Ответы на опросы
+                  <span class="ml-2 text-sm font-normal text-gray-500">({{ surveyAnswers.length }})</span>
+                </h2>
+                <button
+                  @click="isSurveyAnswersExpanded = !isSurveyAnswersExpanded"
+                  class="text-gray-500 hover:text-gray-700"
+                >
+                  <svg 
+                    class="w-6 h-6 transition-transform"
+                    :class="{ 'rotate-180': !isSurveyAnswersExpanded }"
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div v-show="isSurveyAnswersExpanded" class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="min-w-full">
+                  <thead class="sticky top-0 bg-white">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вебинар
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Вопрос
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Ответ
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="surveyAnswers.length === 0">
+                      <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет ответов на опросы
+                      </td>
+                    </tr>
+                    <tr v-else v-for="(answer, index) in surveyAnswers" :key="index" class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/webinar/${answer.webinarId}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {{ answer.webinarName }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        {{ answer.question }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ answer.answer }}
                       </td>
                     </tr>
                   </tbody>

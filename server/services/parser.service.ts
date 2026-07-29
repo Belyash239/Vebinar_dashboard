@@ -148,7 +148,8 @@ class ParserService {
           row['Фамилия'] || '',
           innStr,
           phoneNumber || null,
-          row['Компания']
+          row['Компания'],
+          row['Должность'] || null
         )
 
         // Создать или получить email
@@ -172,7 +173,6 @@ class ParserService {
         databaseService.addParticipantWebinar(participantId, webinarId, {
             chatName: row['Имя в чате'],
             company: row['Компания'],
-            position: row['Должность'],
             registrationStatus: row['Статус регистрации'],
             registrationDate: row['Дата регистрации'],
             sources: row['Источники'],
@@ -331,6 +331,132 @@ class ParserService {
     }
     
     console.log(`✅ Импортировано сообщений чата: ${processedCount} из ${data.length}`)
+  }
+
+  // Парсинг файла с опросами
+  async parseSurveyFile(filePath: string, webinarId: number | null, importPositions: boolean = false) {
+    const workbook = XLSX.readFile(filePath)
+    
+    // Ищем лист "Ответы"
+    const surveySheetName = workbook.SheetNames.find((name: string) => 
+      name.toLowerCase().includes('ответ')
+    )
+    
+    if (!surveySheetName) {
+      throw new Error('Лист "Ответы" не найден в файле')
+    }
+    
+    const sheet = workbook.Sheets[surveySheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+
+    console.log(`Парсинг опросов: лист "${surveySheetName}", строк: ${data.length}`)
+    console.log(`Привязка к вебинару: ${webinarId ? `ID ${webinarId}` : 'Не привязано'}`)
+
+    // Проверим первую строку для понимания структуры
+    if (data.length > 0) {
+      console.log('Первая строка опросов (поля):', Object.keys(data[0] as any))
+    }
+
+    let processedCount = 0
+    let notFoundCount = 0
+    let totalAnswers = 0
+    let positionsUpdated = 0
+    const notFoundEmails = new Set<string>()
+    
+    // ID опроса генерируется автоматически как следующий доступный ID
+    // Связь с вебинаром происходит через таблицу "Вебинары-Опросы"
+    const surveyId = databaseService.getNextSurveyId()
+    
+    for (const row of data as any[]) {
+      try {
+        // Поля: Участник (имя), Email, затем вопросы
+        const email = row['Email'] || row['email'] || row['E-mail']
+        
+        if (!email) {
+          continue
+        }
+        
+        // Найти email ID
+        const db = databaseService.getDatabase()
+        const emailResult = db!.exec('SELECT e.ID_email, e.ID_участника FROM Email e WHERE e.Email = ?', [email])
+
+        if (emailResult.length > 0 && emailResult[0].values.length > 0) {
+          const emailId = emailResult[0].values[0][0] as number
+          const participantId = emailResult[0].values[0][1] as number
+          
+          let positionFound = false
+          
+          // Перебираем все поля, кроме "Участник" и "Email"
+          const allFields = Object.keys(row)
+          for (const field of allFields) {
+            // Пропускаем служебные поля
+            if (field === 'Участник' || field === 'участник' || 
+                field === 'Email' || field === 'email' || field === 'E-mail') {
+              continue
+            }
+            
+            // Поле - это вопрос, значение - это ответ
+            const question = field.trim()
+            const answer = row[field]
+            
+            // Пропускаем пустые ответы
+            if (!answer || String(answer).trim() === '') {
+              continue
+            }
+            
+            const answerStr = String(answer).trim()
+            
+            // Проверяем, является ли это поле должностью
+            if (importPositions && !positionFound) {
+              const questionLower = question.toLowerCase()
+              const answerLower = answerStr.toLowerCase()
+              
+              // Проверяем ключевые слова в вопросе или ответе
+              const isPositionField = 
+                questionLower.includes('должность') ||
+                questionLower.includes('кем работаете') ||
+                questionLower.includes('кто вы') ||
+                questionLower.includes('ваша роль') ||
+                questionLower.includes('позиция') ||
+                answerLower.includes('бухгалтер') ||
+                answerLower.includes('директор') ||
+                answerLower.includes('менеджер') ||
+                answerLower.includes('специалист') ||
+                answerLower.includes('руководитель')
+              
+              if (isPositionField) {
+                // Обновляем должность участника
+                databaseService.updateParticipantPosition(participantId, answerStr)
+                positionFound = true
+                positionsUpdated++
+                console.log(`Обновлена должность для ${email}: ${answerStr}`)
+              }
+            }
+            
+            // Добавляем вопрос и ответ (с webinarId или без него)
+            databaseService.addSurveyQuestion(surveyId, question, webinarId, emailId, answerStr)
+            totalAnswers++
+          }
+          
+          processedCount++
+        } else {
+          notFoundCount++
+          notFoundEmails.add(email)
+        }
+      } catch (error) {
+        console.error('Ошибка при обработке опроса:', error)
+      }
+    }
+    
+    console.log(`✅ Обработано участников: ${processedCount} из ${data.length}`)
+    console.log(`✅ Импортировано ответов на опросы: ${totalAnswers}`)
+    if (importPositions) {
+      console.log(`✅ Обновлено должностей: ${positionsUpdated}`)
+    }
+    if (notFoundCount > 0) {
+      console.log(`⚠️ Не найдено email для ${notFoundCount} участников`)
+      console.log('Примеры не найденных email:', Array.from(notFoundEmails).slice(0, 5))
+    }
   }
 }
 

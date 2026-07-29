@@ -321,11 +321,7 @@ class DatabaseService {
         u.Номер_телефона as phone,
         u.Имя as firstName,
         u.Фамилия as lastName,
-        (SELECT uw.Должность 
-         FROM "Участники-Вебинары" uw 
-         WHERE uw.ID_участника = e.ID_участника 
-         AND uw.Должность IS NOT NULL 
-         LIMIT 1) as position,
+        u.Должность as position,
         (SELECT COUNT(*) FROM "Участники-Вебинары" uw2 
          WHERE uw2.ID_участника = e.ID_участника) as totalWebinars,
         (SELECT MIN(w.Дата) 
@@ -504,7 +500,7 @@ class DatabaseService {
   }
 
   // Получить или создать участника
-  getOrCreateParticipant(firstName: string, lastName: string, inn: string, phone?: string, companyName?: string) {
+  getOrCreateParticipant(firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
     // Сначала получаем или создаём компанию
     const companyId = this.getOrCreateCompany(inn, companyName)
     
@@ -520,9 +516,13 @@ class DatabaseService {
     if (result.length > 0 && result[0].values.length > 0) {
       const participantId = result[0].values[0][0] as number
       
-      // Обновляем телефон если он был передан
-      if (phone) {
-        this.db!.run(`UPDATE Участники SET Номер_телефона = ? WHERE ID_участника = ?`, [phone, participantId])
+      // Обновляем телефон и должность если они были переданы
+      if (phone || position) {
+        this.db!.run(`UPDATE Участники SET Номер_телефона = ?, Должность = ? WHERE ID_участника = ?`, [
+          phone || null, 
+          position || null, 
+          participantId
+        ])
       }
       
       return participantId
@@ -530,13 +530,14 @@ class DatabaseService {
 
     // Создаём нового участника
     this.db!.run(`
-      INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона) 
-      VALUES (?, ?, ?, ?)
+      INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона, Должность) 
+      VALUES (?, ?, ?, ?, ?)
     `, [
       companyId,
       firstName || null, 
       lastName || null,
-      phone || null
+      phone || null,
+      position || null
     ])
     const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
     return idResult[0].values[0][0] as number
@@ -565,7 +566,6 @@ class DatabaseService {
     const cleanData = {
       chatName: data.chatName || null,
       company: data.company || null,
-      position: data.position || null,
       registrationStatus: data.registrationStatus || null,
       registrationDate: data.registrationDate || null,
       sources: data.sources || null,
@@ -591,7 +591,7 @@ class DatabaseService {
 
     this.db!.run(`
       INSERT OR REPLACE INTO "Участники-Вебинары" (
-        ID_участника, ID_вебинара, Имя_в_чате, Компания, Должность,
+        ID_участника, ID_вебинара, Имя_в_чате, Компания,
         Статус_регистрации, Дата_регистрации, Источники,
         utm_source, utm_medium, utm_campaign, utm_content,
         Платформа, Страна, Город, Последний_IP,
@@ -601,10 +601,10 @@ class DatabaseService {
         Кол_во_сообщений, Процент_от_общего_кол_ва_сообщений,
         Кол_во_вопросов, Процент_от_общего_кол_ва_вопросов,
         Количество_поднятых_рук, Количество_отправленных_эмодзи_реакций
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       participantId, webinarId,
-      cleanData.chatName, cleanData.company, cleanData.position,
+      cleanData.chatName, cleanData.company,
       cleanData.registrationStatus, cleanData.registrationDate, cleanData.sources,
       cleanData.utmSource, cleanData.utmMedium, cleanData.utmCampaign, cleanData.utmContent,
       cleanData.platform, cleanData.country, cleanData.city, cleanData.lastIP,
@@ -652,11 +652,48 @@ class DatabaseService {
 
   // Удалить вебинар (откат при ошибке)
   deleteWebinar(webinarId: number) {
+    // Получаем ID опросов, связанных с этим вебинаром
+    const surveyIds = this.db!.exec(`
+      SELECT DISTINCT ID_опроса 
+      FROM "Вебинары-Опросы" 
+      WHERE ID_вебинара = ?
+    `, [webinarId])
+
     // Удаляем в порядке зависимостей
     this.db!.run('DELETE FROM Чат WHERE ID_вебинара = ?', [webinarId])
     this.db!.run('DELETE FROM Вопросы WHERE ID_вебинара = ?', [webinarId])
     this.db!.run('DELETE FROM "Участники-Вебинары" WHERE ID_вебинара = ?', [webinarId])
     this.db!.run('DELETE FROM "Вебинары-Теги" WHERE ID_мероприятия = ?', [webinarId])
+    
+    // Удаляем ответы на опросы, связанные с этим вебинаром
+    if (surveyIds.length > 0 && surveyIds[0].values.length > 0) {
+      for (const row of surveyIds[0].values) {
+        const surveyId = row[0] as number
+        
+        // Получаем ID вопросов этого опроса
+        const questionIds = this.db!.exec(`
+          SELECT ID_вопроса 
+          FROM Опросы 
+          WHERE ID_опроса = ?
+        `, [surveyId])
+        
+        // Удаляем ответы для каждого вопроса
+        if (questionIds.length > 0 && questionIds[0].values.length > 0) {
+          for (const qRow of questionIds[0].values) {
+            const questionId = qRow[0] as number
+            this.db!.run('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?', [questionId])
+          }
+        }
+        
+        // Удаляем вопросы опроса
+        this.db!.run('DELETE FROM Опросы WHERE ID_опроса = ?', [surveyId])
+      }
+    }
+    
+    // Удаляем связь вебинар-опрос
+    this.db!.run('DELETE FROM "Вебинары-Опросы" WHERE ID_вебинара = ?', [webinarId])
+    
+    // Удаляем сам вебинар
     this.db!.run('DELETE FROM Вебинары WHERE ID_вебинара = ?', [webinarId])
     
     // Удалить участников, которые больше не связаны ни с одним вебинаром
@@ -919,11 +956,7 @@ class DatabaseService {
         e.Email as email,
         u.Имя as firstName,
         u.Фамилия as lastName,
-        (SELECT uw.Должность 
-         FROM "Участники-Вебинары" uw 
-         WHERE uw.ID_участника = u.ID_участника 
-         AND uw.Должность IS NOT NULL 
-         LIMIT 1) as position
+        u.Должность as position
       FROM Участники u
       INNER JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Email e ON u.ID_участника = e.ID_участника
@@ -932,6 +965,196 @@ class DatabaseService {
     `
     return this.execQuery(query, [inn])
   }
+
+  // Добавить вопрос опроса и связать с вебинаром и email
+  addSurveyQuestion(surveyId: number, question: string, webinarId: number | null, emailId: number, answer: string | null) {
+    // Проверяем, существует ли уже этот вопрос для данного опроса
+    const existingQuestion = this.db!.exec(`
+      SELECT ID_вопроса FROM Опросы WHERE ID_опроса = ? AND Вопрос = ?
+    `, [surveyId, question])
+
+    let questionId: number
+
+    if (existingQuestion.length > 0 && existingQuestion[0].values.length > 0) {
+      // Вопрос уже существует
+      questionId = existingQuestion[0].values[0][0] as number
+    } else {
+      // Создаём новый вопрос
+      this.db!.run(`INSERT INTO Опросы (ID_опроса, Вопрос) VALUES (?, ?)`, [surveyId, question])
+      const result = this.db!.exec('SELECT last_insert_rowid() as id')
+      questionId = result[0].values[0][0] as number
+    }
+
+    // Связываем вебинар с опросом (если ещё не связан и webinarId указан)
+    if (webinarId !== null) {
+      this.db!.run(`INSERT OR IGNORE INTO "Вебинары-Опросы" (ID_вебинара, ID_опроса) VALUES (?, ?)`, [
+        webinarId, 
+        surveyId
+      ])
+    }
+
+    // Добавляем ответ участника
+    if (answer) {
+      this.db!.run(`INSERT OR REPLACE INTO "Опросы-Email" (ID_вопроса, ID_email, Ответ) VALUES (?, ?, ?)`, [
+        questionId, 
+        emailId, 
+        answer
+      ])
+    }
+  }
+
+  // Обновить должность участника
+  updateParticipantPosition(participantId: number, position: string) {
+    this.db!.run(`UPDATE Участники SET Должность = ? WHERE ID_участника = ?`, [position, participantId])
+  }
+
+  // Получить чат участника
+  getParticipantChat(email: string) {
+    const query = `
+      SELECT 
+        w.ID_вебинара as webinarId,
+        w.Название as webinarName,
+        w.Дата as webinarDate,
+        c.Время as time,
+        c.Сообщение_чата as message
+      FROM Чат c
+      INNER JOIN Email e ON c.ID_email = e.ID_email
+      INNER JOIN Вебинары w ON c.ID_вебинара = w.ID_вебинара
+      WHERE e.Email = ?
+      ORDER BY w.Дата DESC, c.Время DESC
+    `
+    return this.execQuery(query, [email])
+  }
+
+  // Получить вопросы участника
+  getParticipantQuestions(email: string) {
+    const query = `
+      SELECT 
+        w.ID_вебинара as webinarId,
+        w.Название as webinarName,
+        w.Дата as webinarDate,
+        v.Вопрос as question,
+        v.Статус_вопроса as status,
+        v.Отвечающий as responder,
+        v.Ответы_и_комментарии as answer
+      FROM Вопросы v
+      INNER JOIN Email e ON v.ID_email = e.ID_email
+      INNER JOIN Вебинары w ON v.ID_вебинара = w.ID_вебинара
+      WHERE e.Email = ?
+      ORDER BY w.Дата DESC
+    `
+    return this.execQuery(query, [email])
+  }
+
+  // Получить ответы на опросы участника
+  getParticipantSurveyAnswers(email: string) {
+    const query = `
+      SELECT 
+        w.ID_вебинара as webinarId,
+        w.Название as webinarName,
+        w.Дата as webinarDate,
+        o.Вопрос as question,
+        oe.Ответ as answer
+      FROM "Опросы-Email" oe
+      INNER JOIN Email e ON oe.ID_email = e.ID_email
+      INNER JOIN Опросы o ON oe.ID_вопроса = o.ID_вопроса
+      INNER JOIN "Вебинары-Опросы" wo ON o.ID_опроса = wo.ID_опроса
+      INNER JOIN Вебинары w ON wo.ID_вебинара = w.ID_вебинара
+      WHERE e.Email = ?
+      ORDER BY w.Дата DESC, o.ID_вопроса ASC
+    `
+    return this.execQuery(query, [email])
+  }
+
+  // Получить ответы на опросы всех участников компании
+  getCompanySurveyAnswers(inn: string) {
+    const query = `
+      SELECT 
+        w.ID_вебинара as webinarId,
+        w.Название as webinarName,
+        w.Дата as webinarDate,
+        e.Email as participantEmail,
+        u.Имя as firstName,
+        u.Фамилия as lastName,
+        o.Вопрос as question,
+        oe.Ответ as answer
+      FROM "Опросы-Email" oe
+      INNER JOIN Email e ON oe.ID_email = e.ID_email
+      INNER JOIN Участники u ON e.ID_участника = u.ID_участника
+      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Опросы o ON oe.ID_вопроса = o.ID_вопроса
+      INNER JOIN "Вебинары-Опросы" wo ON o.ID_опроса = wo.ID_опроса
+      INNER JOIN Вебинары w ON wo.ID_вебинара = w.ID_вебинара
+      WHERE c.ИНН_компании = ?
+      ORDER BY w.Дата DESC, e.Email, o.ID_вопроса ASC
+    `
+    return this.execQuery(query, [inn])
+  }
+
+  // Получить все опросы
+  getAllSurveys() {
+    const query = `
+      SELECT DISTINCT
+        o.ID_опроса as id,
+        COUNT(DISTINCT o.ID_вопроса) as questionsCount,
+        COUNT(DISTINCT oe.ID_email) as participantsCount,
+        (SELECT w.Название 
+         FROM "Вебинары-Опросы" wo2 
+         INNER JOIN Вебинары w ON wo2.ID_вебинара = w.ID_вебинара 
+         WHERE wo2.ID_опроса = o.ID_опроса 
+         LIMIT 1) as webinarName,
+        (SELECT w.ID_вебинара 
+         FROM "Вебинары-Опросы" wo2 
+         INNER JOIN Вебинары w ON wo2.ID_вебинара = w.ID_вебинара 
+         WHERE wo2.ID_опроса = o.ID_опроса 
+         LIMIT 1) as webinarId
+      FROM Опросы o
+      LEFT JOIN "Опросы-Email" oe ON o.ID_вопроса = oe.ID_вопроса
+      GROUP BY o.ID_опроса
+      ORDER BY o.ID_опроса DESC
+    `
+    return this.execQuery(query)
+  }
+
+  // Удалить опрос
+  deleteSurvey(surveyId: number) {
+    // Получаем ID вопросов этого опроса
+    const questionIds = this.db!.exec(`
+      SELECT ID_вопроса 
+      FROM Опросы 
+      WHERE ID_опроса = ?
+    `, [surveyId])
+    
+    // Удаляем ответы для каждого вопроса
+    if (questionIds.length > 0 && questionIds[0].values.length > 0) {
+      for (const row of questionIds[0].values) {
+        const questionId = row[0] as number
+        this.db!.run('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?', [questionId])
+      }
+    }
+    
+    // Удаляем вопросы опроса
+    this.db!.run('DELETE FROM Опросы WHERE ID_опроса = ?', [surveyId])
+    
+    // Удаляем связь вебинар-опрос
+    this.db!.run('DELETE FROM "Вебинары-Опросы" WHERE ID_опроса = ?', [surveyId])
+    
+    this.save()
+  }
+
+    // Получить следующий доступный ID опроса
+    getNextSurveyId(): number {
+      const result = this.db!.exec(`
+        SELECT COALESCE(MAX(ID_опроса), 0) + 1 as next_id FROM Опросы
+      `)
+
+      if (result.length > 0 && result[0].values.length > 0) {
+        return result[0].values[0][0] as number
+      }
+
+      return 1
+    }
+
 }
 
 export default new DatabaseService()

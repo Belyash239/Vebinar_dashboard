@@ -15,6 +15,8 @@ interface Tag {
 const mainFile = ref<File | null>(null)
 const questionsFile = ref<File | null>(null)
 const chatFile = ref<File | null>(null)
+const surveyFile = ref<File | null>(null)
+const importPositions = ref(false)
 
 const tags = ref<Tag[]>([])
 const isLoadingTags = ref(false)
@@ -57,7 +59,7 @@ onMounted(() => {
   loadTags()
 })
 
-const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat') => {
+const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat' | 'survey') => {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   
@@ -65,6 +67,7 @@ const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat')
     if (fileType === 'main') mainFile.value = file
     else if (fileType === 'questions') questionsFile.value = file
     else if (fileType === 'chat') chatFile.value = file
+    else if (fileType === 'survey') surveyFile.value = file
   }
 }
 
@@ -87,6 +90,11 @@ const handleSubmit = async () => {
     
     if (chatFile.value) {
       formData.append('chatFile', chatFile.value)
+    }
+    
+    if (surveyFile.value) {
+      formData.append('surveyFile', surveyFile.value)
+      formData.append('importPositions', importPositions.value.toString())
     }
 
     const selectedTags = tags.value.filter(t => t.checked).map(t => t.name)
@@ -185,6 +193,40 @@ const handleSubmit = async () => {
                 <span v-if="!chatFile">Перетащите файл или нажмите для выбора</span>
                 <span v-else class="text-blue-600">{{ chatFile.name }}</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Опросы (необязательно) -->
+          <div>
+            <label class="block text-lg font-medium text-gray-900 mb-3">
+              Опросы <span class="text-sm text-gray-500 font-normal">(необязательно)</span>
+            </label>
+            <div class="relative border-2 border-dashed border-gray-300 rounded-lg p-8 hover:border-gray-400 transition">
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                @change="handleFileSelect($event, 'survey')"
+                class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div class="text-center text-gray-500">
+                <span v-if="!surveyFile">Перетащите файл или нажмите для выбора</span>
+                <span v-else class="text-blue-600">{{ surveyFile.name }}</span>
+              </div>
+            </div>
+            
+            <!-- Галочка импорта должностей -->
+            <div v-if="surveyFile" class="mt-4">
+              <label class="flex items-center gap-3 cursor-pointer">
+                <input
+                  v-model="importPositions"
+                  type="checkbox"
+                  class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                />
+                <span class="text-sm text-gray-700">Импортировать должности из опросов</span>
+              </label>
+              <p class="mt-2 text-xs text-gray-500 ml-7">
+                Должности будут определяться по ключевым словам в вопросах и ответах
+              </p>
             </div>
           </div>
 

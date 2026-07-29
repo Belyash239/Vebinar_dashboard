@@ -28,3 +28,7 @@ uploads/
 public/data/real/
 
 ТЗ_ Анализ участников вебинаров.txt
+
+tests/
+
+vitest.config.ts
