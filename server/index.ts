@@ -528,6 +528,70 @@ app.post('/api/upload-survey',
   }
 )
 
+// Получить колонки из Excel файла (для bulk import)
+app.post('/api/bulk-import/columns',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const file = req.file
+
+      if (!file) {
+        return res.status(400).json({ error: 'File is required' })
+      }
+
+      const columns = await parserService.readExcelColumns(file.path)
+      
+      res.json(columns)
+    } catch (error) {
+      console.error('Error reading columns:', error)
+      res.status(500).json({ 
+        error: 'Failed to read columns',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
+// Импорт больших файлов с маппингом
+app.post('/api/bulk-import',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const file = req.file
+      const { mappings } = req.body
+
+      if (!file) {
+        return res.status(400).json({ error: 'File is required' })
+      }
+
+      if (!mappings) {
+        return res.status(400).json({ error: 'Column mappings are required' })
+      }
+
+      const columnMappings = JSON.parse(mappings)
+      
+      await parserService.parseBulkFile(file.path, columnMappings)
+
+      // Сохраняем БД
+      console.log('Сохранение данных в БД...')
+      databaseService.saveDatabase()
+      console.log('✅ Bulk импорт завершён успешно')
+
+      res.json({ 
+        success: true,
+        message: 'Bulk import completed successfully' 
+      })
+    } catch (error) {
+      console.error('Error during bulk import:', error)
+      
+      res.status(500).json({ 
+        error: 'Failed to import file',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
 })

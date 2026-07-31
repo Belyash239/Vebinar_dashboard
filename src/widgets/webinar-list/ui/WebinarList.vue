@@ -5,6 +5,7 @@ const emit = defineEmits<{
   openImport: []
   openExport: []
   openSurveyImport: []
+  openBulkImport: []
   refresh: []
 }>()
 
@@ -149,6 +150,14 @@ defineExpose({
         <h2 class="text-lg font-medium text-gray-900">Список импортированных вебинаров</h2>
         
         <div class="flex items-center gap-4">
+          <button
+            @click="emit('openBulkImport')"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium"
+            title="Импорт больших файлов"
+          >
+            Импорт больших файлов
+          </button>
+
           <button
             @click="emit('openSurveyImport')"
             class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium"

@@ -4,6 +4,7 @@ import WebinarList from '@/widgets/webinar-list/ui/WebinarList.vue'
 import SurveyList from '@/widgets/survey-list/ui/SurveyList.vue'
 import ImportModal from '@/features/upload-files/ui/ImportModal.vue'
 import SurveyImportModal from '@/features/upload-files/ui/SurveyImportModal.vue'
+import BulkImportModal from '@/features/upload-files/ui/BulkImportModal.vue'
 
 interface Tag {
   id: number
@@ -13,6 +14,7 @@ interface Tag {
 const showImportModal = ref(false)
 const showExportModal = ref(false)
 const showSurveyImportModal = ref(false)
+const showBulkImportModal = ref(false)
 const showSuccessNotification = ref(false)
 const successMessage = ref('')
 const webinarListRef = ref<InstanceType<typeof WebinarList> | null>(null)
@@ -54,6 +56,28 @@ const handleSurveyImportSuccess = () => {
   surveyListRef.value?.fetchSurveys()
   
   successMessage.value = 'Опросы успешно импортированы!'
+  showSuccessNotification.value = true
+  
+  // Автоматически скрыть уведомление через 3 секунды
+  setTimeout(() => {
+    showSuccessNotification.value = false
+  }, 3000)
+}
+
+const openBulkImportModal = () => {
+  showBulkImportModal.value = true
+}
+
+const closeBulkImportModal = () => {
+  showBulkImportModal.value = false
+}
+
+const handleBulkImportSuccess = () => {
+  // Обновляем все списки
+  webinarListRef.value?.fetchWebinars()
+  surveyListRef.value?.fetchSurveys()
+  
+  successMessage.value = 'Данные успешно импортированы!'
   showSuccessNotification.value = true
   
   // Автоматически скрыть уведомление через 3 секунды
@@ -168,6 +192,7 @@ const handleExport = async () => {
         @open-import="openImportModal"
         @open-export="openExportModal"
         @open-survey-import="openSurveyImportModal"
+        @open-bulk-import="openBulkImportModal"
       />
 
       <!-- Список опросов -->
@@ -186,6 +211,12 @@ const handleExport = async () => {
       v-if="showSurveyImportModal" 
       @close="closeSurveyImportModal"
       @success="handleSurveyImportSuccess"
+    />
+
+    <BulkImportModal 
+      v-if="showBulkImportModal" 
+      @close="closeBulkImportModal"
+      @success="handleBulkImportSuccess"
     />
 
     <!-- Success Notification -->

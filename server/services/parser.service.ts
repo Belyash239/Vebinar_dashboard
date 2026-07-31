@@ -458,6 +458,335 @@ class ParserService {
       console.log('Примеры не найденных email:', Array.from(notFoundEmails).slice(0, 5))
     }
   }
+
+  // Прочитать колонки из Excel файла
+  async readExcelColumns(filePath: string): Promise<{ columns: string[], rowCount: number }> {
+    const workbook = XLSX.readFile(filePath)
+    
+    console.log('📂 Листы в файле:', workbook.SheetNames)
+    
+    // Берём первый лист (или первый не "Общая информация")
+    const sheetName = workbook.SheetNames.find((name: string) => 
+      !name.toLowerCase().includes('общая')
+    ) || workbook.SheetNames[0]
+    
+    console.log('📄 Выбран лист:', sheetName)
+    
+    const sheet = workbook.Sheets[sheetName]
+    
+    // Получаем диапазон листа
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1')
+    
+    // Читаем ВСЕ колонки из первой строки (включая пустые)
+    const columns: string[] = []
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col })
+      const cell = sheet[cellAddress]
+      
+      // Если ячейка существует и имеет значение - берем его
+      // Если пустая - используем адрес колонки (A, B, C, ...)
+      if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== '') {
+        columns.push(String(cell.v).trim())
+      } else {
+        // Для пустых колонок используем букву колонки
+        const colLetter = XLSX.utils.encode_col(col)
+        columns.push(`[Пустая колонка ${colLetter}]`)
+      }
+    }
+    
+    // Считаем количество строк с данными
+    const data = XLSX.utils.sheet_to_json(sheet)
+    const rowCount = data.length
+    
+    console.log('📊 Строк данных:', rowCount)
+    console.log('📋 ВСЕ КОЛОНКИ ИЗ EXCEL (включая пустые, всего:', columns.length, '):')
+    columns.forEach((col, idx) => {
+      console.log(`  ${idx + 1}. "${col}"`)
+    })
+    
+    return { columns, rowCount }
+  }
+
+  // Импорт больших файлов с маппингом полей (как основной лист с множеством вебинаров)
+  async parseBulkFile(filePath: string, mappings: Array<{ excelColumn: string, dbField: string }>) {
+    const workbook = XLSX.readFile(filePath)
+    
+    // Берём первый лист (или первый не "Общая информация")
+    const sheetName = workbook.SheetNames.find((name: string) => 
+      !name.toLowerCase().includes('общая')
+    ) || workbook.SheetNames[0]
+    
+    const sheet = workbook.Sheets[sheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+    
+    console.log(`Bulk импорт: лист "${sheetName}", строк: ${data.length}`)
+    
+    // Создаём мапу для быстрого доступа к маппингу
+    const mappingMap = new Map<string, string>()
+    mappings.forEach(m => {
+      if (m.dbField) {
+        mappingMap.set(m.excelColumn, m.dbField)
+      }
+    })
+    
+    console.log('====================================')
+    console.log('НАСТРОЕННЫЕ СООТВЕТСТВИЯ:')
+    console.log('====================================')
+    Array.from(mappingMap.entries()).forEach(([col, field]) => {
+      console.log(`  "${col}" → "${field}"`)
+    })
+    console.log('====================================')
+    
+    // Выводим первую строку Excel для понимания структуры
+    if (data.length > 0) {
+      console.log('\nПЕРВАЯ СТРОКА EXCEL (все поля):')
+      const firstRow = data[0] as any
+      Object.keys(firstRow).forEach(key => {
+        console.log(`  "${key}": "${firstRow[key]}"`)
+      })
+      console.log('====================================\n')
+    }
+    
+    let processedCount = 0
+    let skippedCount = 0
+    let skippedInnCount = 0
+    let skippedNoEmailCount = 0
+    let debugRowCount = 0
+    
+    // Кэш для вебинаров: ключ = "название|дата", значение = webinarId
+    const webinarCache = new Map<string, number>()
+    
+    for (const row of data as any[]) {
+      try {
+        // Извлекаем значения согласно маппингу
+        const mappedData: any = {}
+        
+        for (const [excelCol, dbField] of mappingMap.entries()) {
+          mappedData[dbField] = row[excelCol]
+        }
+        
+        // Выводим первые 3 записи для отладки
+        if (debugRowCount < 3) {
+          console.log(`\n📋 Запись ${debugRowCount + 1}:`)
+          console.log('  Email:', mappedData['Email'])
+          console.log('  Имя:', mappedData['Имя'])
+          console.log('  Фамилия:', mappedData['Фамилия'])
+          console.log('  ИНН_компании:', mappedData['ИНН_компании'], `(тип: ${typeof mappedData['ИНН_компании']})`)
+          console.log('  ИНН:', mappedData['ИНН'], `(тип: ${typeof mappedData['ИНН']})`)
+          console.log('  Название_компании:', mappedData['Название_компании'])
+          console.log('  Вебинар:', mappedData['Вебинар'])
+          console.log('  Дата_проведения:', mappedData['Дата_проведения'])
+          debugRowCount++
+        }
+        
+        // Пропускаем строки без Email (обязательное поле)
+        if (!mappedData['Email']) {
+          skippedNoEmailCount++
+          if (debugRowCount <= 3) {
+            console.log(`❌ Пропущена запись: нет Email`)
+          }
+          continue
+        }
+        
+        // Валидация ИНН: сначала проверяем "ИНН компании", если пусто - берём "ИНН"
+        let innValue = mappedData['ИНН_компании']
+        
+        if (debugRowCount <= 3) {
+          console.log(`\n🔍 Проверка ИНН для записи ${debugRowCount}:`)
+          console.log(`  ИНН_компании = "${innValue}" (тип: ${typeof innValue}, пусто: ${!innValue || String(innValue).trim() === ''})`)
+        }
+        
+        // Если ИНН_компании пустой, пробуем ИНН
+        if (!innValue || String(innValue).trim() === '') {
+          innValue = mappedData['ИНН']
+          if (debugRowCount <= 3) {
+            console.log(`  ИНН_компании пустой, проверяем ИНН = "${innValue}" (тип: ${typeof innValue})`)
+          }
+        }
+        
+        let innStr = ''
+        let hasValidInn = false
+        
+        // Если есть ИНН, проверяем его корректность
+        if (innValue && String(innValue).trim() !== '') {
+          innStr = String(innValue).trim()
+          
+          if (debugRowCount <= 3) {
+            console.log(`  Проверка формата: "${innStr}" → регулярка: ${/^\d{10}$|^\d{12}$/.test(innStr)}`)
+          }
+          
+          // Проверяем корректность ИНН (только цифры, длина 10 или 12)
+          if (/^\d{10}$|^\d{12}$/.test(innStr)) {
+            hasValidInn = true
+            if (debugRowCount <= 3) {
+              console.log(`  ✅ ИНН корректный: ${innStr}`)
+            }
+          } else {
+            if (debugRowCount <= 3 || skippedInnCount < 5) {
+              console.log(`  ⚠️ Некорректный ИНН для Email=${mappedData['Email']}: "${innValue}" (должен быть 10 или 12 цифр)`)
+            }
+            skippedInnCount++
+            innStr = '0000000000' // Временный ИНН-заглушка
+          }
+        } else {
+          if (debugRowCount <= 3 || skippedInnCount < 5) {
+            console.log(`  ⚠️ Нет ИНН для Email=${mappedData['Email']}, использую заглушку`)
+          }
+          skippedInnCount++
+          innStr = '0000000000' // Временный ИНН-заглушка
+        }
+        
+        // Обработка вебинара
+        let currentWebinarId: number | null = null
+        
+        if (mappedData['Вебинар'] || mappedData['Дата_проведения']) {
+          const webinarName = mappedData['Вебинар'] || 'Импортированный вебинар'
+          let webinarDate = mappedData['Дата_проведения'] || new Date().toISOString().split('T')[0]
+          
+          console.log(`🔍 Обработка вебинара: название="${webinarName}", дата="${webinarDate}" (тип: ${typeof webinarDate})`)
+          
+          // Нормализуем дату если это Excel serial number
+          if (typeof webinarDate === 'number') {
+            const date = XLSX.SSF.parse_date_code(webinarDate)
+            webinarDate = `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`
+            console.log(`  📅 Дата преобразована из Excel serial: ${webinarDate}`)
+          } else if (webinarDate instanceof Date) {
+            webinarDate = webinarDate.toISOString().split('T')[0]
+            console.log(`  📅 Дата преобразована из Date: ${webinarDate}`)
+          } else if (typeof webinarDate === 'string') {
+            const parsed = new Date(webinarDate)
+            if (!isNaN(parsed.getTime())) {
+              webinarDate = parsed.toISOString().split('T')[0]
+              console.log(`  📅 Дата распарсена из строки: ${webinarDate}`)
+            }
+          }
+          
+          // Форматируем название с датой
+          const dateObj = new Date(webinarDate)
+          const formattedDate = `${String(dateObj.getDate()).padStart(2, '0')}.${String(dateObj.getMonth() + 1).padStart(2, '0')}.${dateObj.getFullYear()}`
+          const finalWebinarName = `${webinarName}_${formattedDate}`
+          
+          console.log(`  ✏️ Финальное название: ${finalWebinarName}`)
+          
+          // Создаём ключ для кэша
+          const cacheKey = `${webinarName}|${webinarDate}`
+          
+          // Проверяем кэш
+          if (webinarCache.has(cacheKey)) {
+            currentWebinarId = webinarCache.get(cacheKey)!
+            console.log(`  ♻️ Использован кэш: ID ${currentWebinarId}`)
+          } else {
+            // Проверяем, существует ли вебинар в БД
+            const db = databaseService.getDatabase()
+            const existingWebinar = db!.exec(
+              'SELECT ID_вебинара FROM Вебинары WHERE Название = ?',
+              [finalWebinarName]
+            )
+            
+            if (existingWebinar.length > 0 && existingWebinar[0].values.length > 0) {
+              currentWebinarId = existingWebinar[0].values[0][0] as number
+              console.log(`  ✓ Найден в БД: ID ${currentWebinarId}`)
+            } else {
+              currentWebinarId = databaseService.createWebinar(finalWebinarName, webinarDate) as number
+              console.log(`  ✨ Создан новый: ID ${currentWebinarId}`)
+            }
+            
+            // Сохраняем в кэш
+            webinarCache.set(cacheKey, currentWebinarId)
+          }
+        } else {
+          console.log(`⚠️ Нет данных о вебинаре для Email=${mappedData['Email']}`)
+        }
+        
+        // Обработка номера телефона
+        let phoneNumber = mappedData['Телефон']
+        if (phoneNumber) {
+          if (typeof phoneNumber === 'number') {
+            phoneNumber = String(phoneNumber)
+          } else {
+            phoneNumber = String(phoneNumber).trim()
+          }
+          
+          phoneNumber = phoneNumber.replace(/[\s\-\(\)]/g, '')
+          
+          if (phoneNumber.startsWith('8') && phoneNumber.length === 11) {
+            phoneNumber = '+7' + phoneNumber.slice(1)
+          }
+          
+          if (phoneNumber.startsWith('7') && phoneNumber.length === 11 && !phoneNumber.startsWith('+')) {
+            phoneNumber = '+' + phoneNumber
+          }
+          
+          if (phoneNumber.startsWith('+7') && phoneNumber.length === 12) {
+            phoneNumber = `${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)}-${phoneNumber.slice(8, 10)}-${phoneNumber.slice(10, 12)}`
+          }
+        }
+        
+        // Создаём или находим участника
+        const participantId = databaseService.getOrCreateParticipant(
+          mappedData['Имя'] || '',
+          mappedData['Фамилия'] || '',
+          innStr,
+          phoneNumber || null,
+          mappedData['Название_компании'] || mappedData['Компания_чат'] || null,
+          undefined // должность берём из других источников
+        )
+        
+        // Добавляем email
+        const emailId = databaseService.getOrCreateEmail(mappedData['Email'], participantId)
+        
+        // Если есть вебинар, связываем участника с вебинаром
+        if (currentWebinarId) {
+          databaseService.addParticipantWebinar(participantId, currentWebinarId, {
+            chatName: mappedData['Имя_в_чате'] || null,
+            company: mappedData['Компания_чат'] || null,
+            registrationStatus: mappedData['Статус_регистрации'] || null,
+            registrationDate: mappedData['Дата_регистрации'] || null,
+            sources: mappedData['Источники'] || null,
+            utmSource: mappedData['utm_source'] || null,
+            utmMedium: mappedData['utm_medium'] || null,
+            utmCampaign: mappedData['utm_campaign'] || null,
+            utmContent: mappedData['utm_content'] || null,
+            platform: mappedData['Платформа'] || null,
+            country: mappedData['Страна'] || null,
+            city: mappedData['Город'] || null,
+            lastIP: mappedData['Последний_IP'] || null,
+            firstEntry: mappedData['Время_входа_первое'] || null,
+            lastExit: mappedData['Время_выхода_последнее'] || null,
+            attendanceDuration: mappedData['Присутствие_относительно_длительности'] || null,
+            attendancePercent: mappedData['Присутствие_от_общей_длительности'] || null,
+            messagesCount: mappedData['Кол_во_сообщений'] || 0,
+            messagesPercent: mappedData['Процент_от_общего_кол_ва_сообщений'] || null,
+            questionsCount: mappedData['Кол_во_вопросов'] || 0,
+            questionsPercent: mappedData['Процент_от_общего_кол_ва_вопросов'] || null,
+            handsRaised: mappedData['Количество_поднятых_рук'] || 0,
+            emojiReactions: mappedData['Количество_отправленных_эмодзи_реакций'] || 0
+          })
+        }
+        
+        processedCount++
+      } catch (error) {
+        console.error('Ошибка при обработке строки:', error)
+        skippedCount++
+      }
+    }
+    
+    console.log('\n====================================')
+    console.log('РЕЗУЛЬТАТЫ ИМПОРТА:')
+    console.log('====================================')
+    console.log(`✅ Импортировано записей: ${processedCount}`)
+    console.log(`📊 Создано/обновлено вебинаров: ${webinarCache.size}`)
+    if (skippedNoEmailCount > 0) {
+      console.log(`⚠️ Пропущено записей без Email: ${skippedNoEmailCount}`)
+    }
+    if (skippedInnCount > 0) {
+      console.log(`⚠️ Записей с некорректным/отсутствующим ИНН (использована заглушка): ${skippedInnCount}`)
+    }
+    if (skippedCount > 0) {
+      console.log(`❌ Пропущено записей с ошибками: ${skippedCount}`)
+    }
+    console.log('====================================\n')
+  }
 }
 
 export default new ParserService()
