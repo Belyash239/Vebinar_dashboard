@@ -256,10 +256,10 @@ defineExpose({
         </div>
       </div>
 
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead>
-            <tr class="bg-gray-50">
+      <div class="max-h-[600px] overflow-y-auto border border-gray-200 rounded-lg">
+        <table class="w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Название
                 <span v-if="webinars.length !== allWebinars.length" class="ml-2 text-blue-600 font-normal normal-case">
@@ -302,16 +302,16 @@ defineExpose({
               </td>
             </tr>
             <tr v-else v-for="webinar in webinars" :key="webinar.id" class="hover:bg-gray-50">
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+              <td class="px-6 py-4 text-sm text-gray-900">
                 <router-link 
                   :to="`/webinar/${webinar.id}`"
-                  class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                  class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer break-words"
                 >
                   {{ webinar.name }}
                 </router-link>
               </td>
               <td class="px-6 py-4 text-sm text-gray-600">
-                {{ webinar.tags || '—' }}
+                <div class="break-words">{{ webinar.tags || '—' }}</div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                 {{ formatDate(webinar.date) }}

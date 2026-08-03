@@ -37,6 +37,7 @@ const dbFields = [
   // Поля вебинара
   { value: 'Вебинар', label: 'Вебинар (название)' },
   { value: 'Дата_проведения', label: 'Дата проведения' },
+  { value: 'Теги', label: 'Теги (через запятую)' },
   
   // Поля участия в вебинаре
   { value: 'Имя_в_чате', label: 'Имя в чате' },
@@ -113,13 +114,15 @@ const loadExcelColumns = async () => {
     console.log('  Всего колонок:', excelColumns.value.length)
     console.log('  Список:', excelColumns.value)
     
-    // Инициализируем маппинги - БЕЗ автоматического маппинга, просто пустые значения
+    // Инициализируем маппинги с автоматическим сопоставлением
     columnMappings.value = excelColumns.value.map(col => ({
       excelColumn: col,
-      dbField: '' // Все поля пустые - пользователь выберет вручную
+      dbField: autoMapColumn(col) // Автоматически подбираем соответствие
     }))
     
-    console.log('✅ Создано', columnMappings.value.length, 'строк маппинга')
+    // Считаем сколько полей было замаплено автоматически
+    const autoMappedCount = columnMappings.value.filter(m => m.dbField !== '').length
+    console.log(`✅ Автоматически замаплено ${autoMappedCount} из ${excelColumns.value.length} колонок`)
     
     currentStep.value = 'mapping'
   } catch (error) {
@@ -198,6 +201,12 @@ const autoMapColumn = (excelColumn: string): string => {
   if (col === 'дата проведения' || col === 'дата' || col === 'date' || col === 'webinar date' || col === 'дата вебинара') {
     console.log('  ✅ → Дата_проведения')
     return 'Дата_проведения'
+  }
+  
+  // Теги
+  if (col === 'теги' || col === 'тег' || col === 'tags' || col === 'tag' || col === 'категории' || col === 'категория') {
+    console.log('  ✅ → Теги')
+    return 'Теги'
   }
   
   // Имя в чате
@@ -500,11 +509,8 @@ const mappedFieldsCount = computed(() => {
 
           <div>
             <h3 class="text-lg font-medium text-gray-900 mb-4">Настройка соответствия полей</h3>
-            <p class="text-sm text-gray-600 mb-2">
+            <p class="text-sm text-gray-600 mb-4">
               Укажите, какому полю базы данных соответствует каждая колонка из Excel файла
-            </p>
-            <p class="text-xs text-blue-600 font-medium mb-4">
-              📊 Всего колонок в файле: {{ excelColumns.length }}
             </p>
             
             <div class="space-y-3 max-h-[600px] overflow-y-auto border border-gray-200 rounded-lg p-4">

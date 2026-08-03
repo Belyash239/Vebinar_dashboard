@@ -13,7 +13,7 @@ interface ParticipantDetail {
   firstName: string | null
   lastName: string | null
   position: string | null
-  isNew: boolean
+  isNew: boolean | null
 }
 
 interface ParticipantWebinar {
@@ -239,10 +239,10 @@ onMounted(() => {
           </router-link>
           <span v-else>—</span>
         </h2>
-        <span v-if="participant.isNew" class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+        <span v-if="participant.isNew === true" class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
           Новый
         </span>
-        <span v-else class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
+        <span v-else-if="participant.isNew === false" class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
           Старый
         </span>
       </div>

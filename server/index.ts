@@ -51,6 +51,21 @@ app.get('/api/unique-users', (req, res) => {
   }
 })
 
+// Поиск пользователей
+app.get('/api/search-users', (req, res) => {
+  try {
+    const query = req.query.q as string
+    if (!query || query.trim() === '') {
+      return res.json([])
+    }
+    const users = databaseService.searchUsers(query.trim())
+    res.json(users)
+  } catch (error) {
+    console.error('Error searching users:', error)
+    res.status(500).json({ error: 'Failed to search users' })
+  }
+})
+
 // Получить детали конкретного вебинара
 app.get('/api/webinars/:id', (req, res) => {
   try {

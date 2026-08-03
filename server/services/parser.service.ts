@@ -90,27 +90,28 @@ class ParserService {
           continue
         }
 
-        // Валидация ИНН: только 10 или 12 цифр, обязательное поле
+        // Валидация ИНН: только 10 или 12 цифр (но НЕ обязательное поле)
         const innValue = row['ИНН компании']
+        let innStr = ''
         
-        // Если ИНН отсутствует или пустой - пропускаем запись
-        if (!innValue || String(innValue).trim() === '') {
-          skippedInnCount++
-          if (skippedInnCount <= 5) {
-            console.log(`⚠️ Пропущена запись без ИНН: Email=${row['Email']}`)
+        // Если ИНН присутствует, проверяем его корректность
+        if (innValue && String(innValue).trim() !== '') {
+          innStr = String(innValue).trim()
+          
+          // Проверяем, что ИНН содержит только цифры и длина 10 или 12
+          if (!/^\d{10}$|^\d{12}$/.test(innStr)) {
+            if (skippedInnCount <= 5) {
+              console.log(`⚠️ Некорректный ИНН для Email=${row['Email']}: "${innValue}" - участник будет без компании`)
+            }
+            skippedInnCount++
+            innStr = '' // Пустой ИНН = участник без компании
           }
-          continue
-        }
-        
-        const innStr = String(innValue).trim()
-        
-        // Проверяем, что ИНН содержит только цифры и длина 10 или 12
-        if (!/^\d{10}$|^\d{12}$/.test(innStr)) {
-          skippedInnCount++
+        } else {
           if (skippedInnCount <= 5) {
-            console.log(`⚠️ Пропущена запись с некорректным ИНН: Email=${row['Email']}, ИНН="${innValue}" (должен быть 10 или 12 цифр)`)
+            console.log(`⚠️ Нет ИНН для Email=${row['Email']} - участник будет без компании`)
           }
-          continue
+          skippedInnCount++
+          innStr = '' // Пустой ИНН = участник без компании
         }
 
         // Обработка номера телефона
@@ -142,18 +143,16 @@ class ParserService {
           }
         }
 
-        // Создать или получить участника (теперь ИНН всегда валидный)
-        const participantId = databaseService.getOrCreateParticipant(
+        // Создать или обновить участника по email (уникальность по email)
+        const participantId = databaseService.getOrCreateParticipantByEmail(
+          row['Email'],
           row['Имя'] || '',
           row['Фамилия'] || '',
-          innStr,
+          innStr, // Может быть пустой строкой
           phoneNumber || null,
           row['Компания'],
           row['Должность'] || null
         )
-
-        // Создать или получить email
-        const emailId = databaseService.getOrCreateEmail(row['Email'], participantId)
 
         // Добавить связь участник-вебинар
         // Парсим процент удержания из формата "99,69%" в число 99.69
@@ -623,17 +622,19 @@ class ParserService {
             }
           } else {
             if (debugRowCount <= 3 || skippedInnCount < 5) {
-              console.log(`  ⚠️ Некорректный ИНН для Email=${mappedData['Email']}: "${innValue}" (должен быть 10 или 12 цифр)`)
+              console.log(`  ⚠️ Некорректный ИНН для Email=${mappedData['Email']}: "${innValue}" (должен быть 10 или 12 цифр) - участник будет без компании`)
             }
             skippedInnCount++
-            innStr = '0000000000' // Временный ИНН-заглушка
+            innStr = '' // Пустой ИНН = участник без компании
+            hasValidInn = false
           }
         } else {
           if (debugRowCount <= 3 || skippedInnCount < 5) {
-            console.log(`  ⚠️ Нет ИНН для Email=${mappedData['Email']}, использую заглушку`)
+            console.log(`  ⚠️ Нет ИНН для Email=${mappedData['Email']} - участник будет без компании`)
           }
           skippedInnCount++
-          innStr = '0000000000' // Временный ИНН-заглушка
+          innStr = '' // Пустой ИНН = участник без компании
+          hasValidInn = false
         }
         
         // Обработка вебинара
@@ -689,6 +690,37 @@ class ParserService {
             } else {
               currentWebinarId = databaseService.createWebinar(finalWebinarName, webinarDate) as number
               console.log(`  ✨ Создан новый: ID ${currentWebinarId}`)
+              
+              // Обрабатываем теги если они есть
+              if (mappedData['Теги']) {
+                const tagsStr = String(mappedData['Теги']).trim()
+                if (tagsStr) {
+                  // Разделяем теги по запятой, точке с запятой, | или переносу строки
+                  // Убираем пустые строки и лишние пробелы
+                  const tags = tagsStr
+                    .split(/[,;|\n\r]+/)
+                    .map(t => t.trim())
+                    .filter(t => t.length > 0)
+                  
+                  console.log(`  🏷️ Обработка тегов для вебинара ${currentWebinarId}:`)
+                  console.log(`    Исходная строка: "${tagsStr}"`)
+                  console.log(`    Распарсено тегов: ${tags.length}`)
+                  tags.forEach((tag, idx) => {
+                    console.log(`    Тег ${idx + 1}: "${tag}"`)
+                  })
+                  
+                  let linkedCount = 0
+                  for (const tagName of tags) {
+                    const tagId = databaseService.findTag(tagName)
+                    if (tagId) {
+                      databaseService.linkWebinarTag(currentWebinarId, tagId)
+                      linkedCount++
+                    }
+                  }
+                  
+                  console.log(`  📊 Итого привязано тегов: ${linkedCount} из ${tags.length}`)
+                }
+              }
             }
             
             // Сохраняем в кэш
@@ -722,18 +754,16 @@ class ParserService {
           }
         }
         
-        // Создаём или находим участника
-        const participantId = databaseService.getOrCreateParticipant(
+        // Создаём или находим участника по email (email - уникальный идентификатор)
+        const participantId = databaseService.getOrCreateParticipantByEmail(
+          mappedData['Email'],
           mappedData['Имя'] || '',
           mappedData['Фамилия'] || '',
-          innStr,
+          innStr, // Может быть пустой строкой если ИНН некорректный
           phoneNumber || null,
           mappedData['Название_компании'] || mappedData['Компания_чат'] || null,
           undefined // должность берём из других источников
         )
-        
-        // Добавляем email
-        const emailId = databaseService.getOrCreateEmail(mappedData['Email'], participantId)
         
         // Если есть вебинар, связываем участника с вебинаром
         if (currentWebinarId) {

@@ -223,10 +223,10 @@ onMounted(() => {
       <!-- Заголовок -->
       <div v-if="company" class="mb-6 flex items-center gap-3">
         <h2 class="text-xl font-semibold text-gray-900">{{ company.companyName || 'Компания' }} | ИНН: {{ company.inn }}</h2>
-        <span v-if="company.isNew" class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+        <span v-if="company.isNew === true" class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
           Новая
         </span>
-        <span v-else class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
+        <span v-else-if="company.isNew === false" class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
           Старая
         </span>
       </div>

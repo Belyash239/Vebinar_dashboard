@@ -154,7 +154,7 @@ const applyFilters = () => {
   if (searchQuery.value.trim()) {
     const query = searchQuery.value.toLowerCase()
     filtered = filtered.filter(u => 
-      u.inn.toLowerCase().includes(query) ||
+      (u.inn && u.inn.toLowerCase().includes(query)) ||
       (u.chatName && u.chatName.toLowerCase().includes(query)) ||
       (u.emails && u.emails.toLowerCase().includes(query))
     )

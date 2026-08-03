@@ -61,6 +61,7 @@ const userSearchQuery = ref('')
 const availableTags = ref<string[]>([])
 const tagOptions = ref<{ name: string; checked: boolean }[]>([])
 const isLoading = ref(false)
+const isLoadingUsers = ref(false)
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 let chartInstance: Chart | null = null
 
@@ -144,13 +145,16 @@ const fetchWebinars = async () => {
 }
 
 const fetchUniqueUsers = async () => {
+  isLoadingUsers.value = true
   try {
     const response = await fetch('http://localhost:3000/api/unique-users')
     const data = await response.json()
     allUniqueUsers.value = data
-    applyUserFilters()
+    uniqueUsers.value = data
   } catch (error) {
     console.error('Error fetching unique users:', error)
+  } finally {
+    isLoadingUsers.value = false
   }
 }
 
@@ -190,19 +194,25 @@ const clearWebinarFilters = () => {
   applyWebinarFilters()
 }
 
-const applyUserFilters = () => {
-  let filtered = [...allUniqueUsers.value]
-  
-  // Поиск по ИНН или Email
+const applyUserFilters = async () => {
+  // Если есть поисковый запрос - делаем запрос к серверу для поиска по всей БД
   if (userSearchQuery.value.trim()) {
-    const query = userSearchQuery.value.toLowerCase()
-    filtered = filtered.filter(u => 
-      u.inn.toLowerCase().includes(query) ||
-      (u.emails && u.emails.toLowerCase().includes(query))
-    )
+    isLoadingUsers.value = true
+    try {
+      const query = encodeURIComponent(userSearchQuery.value.trim())
+      const response = await fetch(`http://localhost:3000/api/search-users?q=${query}`)
+      const data = await response.json()
+      uniqueUsers.value = data
+    } catch (error) {
+      console.error('Error searching users:', error)
+      uniqueUsers.value = []
+    } finally {
+      isLoadingUsers.value = false
+    }
+  } else {
+    // Если поиска нет - показываем начальный список (1000 последних)
+    uniqueUsers.value = allUniqueUsers.value
   }
-  
-  uniqueUsers.value = filtered
 }
 
 const formatEmails = (emails: string | null) => {
@@ -717,10 +727,10 @@ onMounted(() => {
                 </div>
               </div>
 
-              <!-- Таблица -->
-              <div class="overflow-x-auto">
+              <!-- Таблица с прокруткой -->
+              <div class="overflow-x-auto max-h-[600px] overflow-y-auto border border-gray-200 rounded-lg">
                 <table class="min-w-full">
-                  <thead>
+                  <thead class="bg-gray-50 sticky top-0">
                     <tr class="border-b border-gray-200">
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
                         Название
@@ -733,7 +743,7 @@ onMounted(() => {
                       </th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody class="bg-white">
                     <tr v-if="webinars.length === 0 && (searchQuery || selectedTagsCount > 0)">
                       <td colspan="3" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет вебинаров, соответствующих фильтрам
@@ -803,7 +813,10 @@ onMounted(() => {
 
               <!-- Таблица с прокруткой -->
               <div style="max-height: 600px; overflow-y: auto;">
-                <table class="w-full table-fixed">
+                <div v-if="isLoadingUsers" class="py-12 text-center text-gray-500">
+                  Загрузка пользователей...
+                </div>
+                <table v-else class="w-full table-fixed">
                   <colgroup>
                     <col style="width: 15%;">
                     <col style="width: 20%;">
@@ -841,14 +854,16 @@ onMounted(() => {
                         Нет пользователей
                       </td>
                     </tr>
-                    <tr v-else v-for="user in uniqueUsers" :key="user.inn" class="border-b border-gray-100 hover:bg-gray-50">
+                    <tr v-else v-for="user in uniqueUsers" :key="user.inn || user.emails" class="border-b border-gray-100 hover:bg-gray-50">
                       <td class="px-6 py-4 text-sm text-gray-900 break-words overflow-hidden">
                         <router-link 
+                          v-if="user.inn"
                           :to="`/company/${encodeURIComponent(user.inn)}`"
                           class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
                           {{ user.inn }}
                         </router-link>
+                        <span v-else>—</span>
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600 break-words overflow-hidden">
                         {{ user.companyName || '—' }}

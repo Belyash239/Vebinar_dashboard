@@ -155,34 +155,120 @@ class DatabaseService {
     return this.execQuery(query)
   }
 
-  // Получить уникальных пользователей с их продуктами
-  getUniqueUsers() {
+  // Получить уникальных пользователей с их продуктами (ОПТИМИЗИРОВАННЫЙ)
+  // Возвращает последних 1000 участников для начального отображения
+  getUniqueUsers(limit: number = 1000) {
     const query = `
       SELECT 
         c.ИНН_компании as inn,
         c.Название as companyName,
         u.Номер_телефона as phone,
-        GROUP_CONCAT(DISTINCT e.Email) as emails,
-        GROUP_CONCAT(DISTINCT CASE 
-          WHEN t.Название_тега NOT IN ('для клиентов', 'для партнёров') 
-          THEN t.Название_тега 
-        END) as products
+        e.Email as email,
+        (
+          SELECT GROUP_CONCAT(DISTINCT t2.Название_тега)
+          FROM "Участники-Вебинары" uw2
+          INNER JOIN "Вебинары-Теги" wt2 ON uw2.ID_вебинара = wt2.ID_мероприятия
+          INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
+          WHERE uw2.ID_участника = u.ID_участника
+            AND t2.Название_тега NOT IN ('для клиентов', 'для партнёров')
+          LIMIT 1
+        ) as products
       FROM Участники u
-      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Email e ON u.ID_участника = e.ID_участника
-      LEFT JOIN "Участники-Вебинары" uw ON u.ID_участника = uw.ID_участника
-      LEFT JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
-      LEFT JOIN "Вебинары-Теги" wt ON w.ID_вебинара = wt.ID_мероприятия
-      LEFT JOIN Тег t ON wt.ID_тега = t.ID_тега
-      WHERE (
-        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
-        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
-        CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
-      ) >= 1
-      GROUP BY u.ID_участника, c.ИНН_компании, c.Название, u.Номер_телефона
-      ORDER BY c.ИНН_компании
+      WHERE EXISTS (
+        SELECT 1 FROM "Участники-Вебинары" uw
+        WHERE uw.ID_участника = u.ID_участника
+          AND uw.Присутствие_относительно_длительности IS NOT NULL
+      )
+      ORDER BY u.ID_участника DESC
+      LIMIT ?
     `
-    return this.execQuery(query)
+    
+    const results = this.execQuery(query, [limit])
+    const grouped = new Map<string, any>()
+    
+    results.forEach((row: any) => {
+      const key = row.inn || row.email
+      
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          inn: row.inn,
+          companyName: row.companyName,
+          phone: row.phone,
+          emails: row.email,
+          products: row.products
+        })
+      } else {
+        const existing = grouped.get(key)!
+        if (existing.emails && !existing.emails.includes(row.email)) {
+          existing.emails += ',' + row.email
+        }
+      }
+    })
+    
+    return Array.from(grouped.values())
+  }
+
+  // Поиск пользователей по запросу (без лимита, ищет по всей БД)
+  searchUsers(searchQuery: string) {
+    const query = `
+      SELECT 
+        c.ИНН_компании as inn,
+        c.Название as companyName,
+        u.Номер_телефона as phone,
+        e.Email as email,
+        (
+          SELECT GROUP_CONCAT(DISTINCT t2.Название_тега)
+          FROM "Участники-Вебинары" uw2
+          INNER JOIN "Вебинары-Теги" wt2 ON uw2.ID_вебинара = wt2.ID_мероприятия
+          INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
+          WHERE uw2.ID_участника = u.ID_участника
+            AND t2.Название_тега NOT IN ('для клиентов', 'для партнёров')
+          LIMIT 1
+        ) as products
+      FROM Участники u
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Email e ON u.ID_участника = e.ID_участника
+      WHERE EXISTS (
+        SELECT 1 FROM "Участники-Вебинары" uw
+        WHERE uw.ID_участника = u.ID_участника
+          AND uw.Присутствие_относительно_длительности IS NOT NULL
+      )
+      AND (
+        LOWER(c.ИНН_компании) LIKE LOWER(?) OR
+        LOWER(c.Название) LIKE LOWER(?) OR
+        LOWER(e.Email) LIKE LOWER(?) OR
+        LOWER(u.Номер_телефона) LIKE LOWER(?)
+      )
+      ORDER BY u.ID_участника DESC
+      LIMIT 500
+    `
+    
+    const searchPattern = `%${searchQuery}%`
+    const results = this.execQuery(query, [searchPattern, searchPattern, searchPattern, searchPattern])
+    const grouped = new Map<string, any>()
+    
+    results.forEach((row: any) => {
+      const key = row.inn || row.email
+      
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          inn: row.inn,
+          companyName: row.companyName,
+          phone: row.phone,
+          emails: row.email,
+          products: row.products
+        })
+      } else {
+        const existing = grouped.get(key)!
+        if (existing.emails && !existing.emails.includes(row.email)) {
+          existing.emails += ',' + row.email
+        }
+      }
+    })
+    
+    return Array.from(grouped.values())
   }
 
   // Получить детальную информацию о вебинаре
@@ -275,7 +361,7 @@ class DatabaseService {
         ) as products
       FROM "Участники-Вебинары" uw
       INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
-      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Email e ON u.ID_участника = e.ID_участника
       WHERE uw.ID_вебинара = ?
         AND (
@@ -323,14 +409,24 @@ class DatabaseService {
         u.Фамилия as lastName,
         u.Должность as position,
         (SELECT COUNT(*) FROM "Участники-Вебинары" uw2 
-         WHERE uw2.ID_участника = e.ID_участника) as totalWebinars,
+         WHERE uw2.ID_участника = e.ID_участника
+           AND (
+             CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw2.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1) as totalWebinars,
         (SELECT MIN(w.Дата) 
          FROM "Участники-Вебинары" uw3 
          INNER JOIN Вебинары w ON uw3.ID_вебинара = w.ID_вебинара 
-         WHERE uw3.ID_участника = e.ID_участника) as firstWebinarDate
+         WHERE uw3.ID_участника = e.ID_участника
+           AND (
+             CAST(SUBSTR(uw3.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+             CAST(SUBSTR(uw3.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+             CAST(SUBSTR(uw3.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+           ) >= 1) as firstWebinarDate
       FROM Email e
       INNER JOIN Участники u ON e.ID_участника = u.ID_участника
-      INNER JOIN Компания c ON u.ID_компании = c.ID_компании
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
       WHERE e.Email = ?
       LIMIT 1
     `
@@ -339,7 +435,12 @@ class DatabaseService {
     
     const participant = result[0]
     // Участник новый, если посетил только 1 вебинар
-    participant.isNew = participant.totalWebinars === 1
+    // Если вебинаров 0 - isNew будет null (не определено)
+    if (participant.totalWebinars === 0) {
+      participant.isNew = null
+    } else {
+      participant.isNew = participant.totalWebinars === 1
+    }
     
     return participant
   }
@@ -467,12 +568,41 @@ class DatabaseService {
   }
 
   // Добавить тег
-  addTag(tagName: string) {
-    this.db!.run(`INSERT OR IGNORE INTO Тег (Название_тега) VALUES (?)`, [tagName])
+  // Найти существующий тег (НЕ создаёт новые)
+  findTag(tagName: string): number | null {
+    // Нормализуем название тега: убираем лишние пробелы
+    let normalizedTagName = tagName.trim()
     
-    const result = this.db!.exec('SELECT ID_тега FROM Тег WHERE Название_тега = ?', [tagName])
-    // Не сохраняем сразу
-    return result.length > 0 ? result[0].values[0][0] as number : null
+    if (!normalizedTagName) {
+      return null
+    }
+    
+    // Дополнительная очистка: убираем лишние внутренние пробелы
+    normalizedTagName = normalizedTagName.replace(/\s+/g, ' ')
+    
+    console.log(`    🔍 Ищем тег: "${normalizedTagName}"`)
+    
+    // Ищем тег без учета регистра и ё/е
+    const result = this.db!.exec(
+      `SELECT ID_тега, Название_тега FROM Тег 
+       WHERE LOWER(REPLACE(TRIM(Название_тега), 'ё', 'е')) = LOWER(REPLACE(TRIM(?), 'ё', 'е'))`,
+      [normalizedTagName]
+    )
+    
+    if (result.length > 0 && result[0].values.length > 0) {
+      const tagId = result[0].values[0][0] as number
+      const actualName = result[0].values[0][1] as string
+      console.log(`    ✓ Найден: "${actualName}" (ID: ${tagId})`)
+      return tagId
+    }
+    
+    console.log(`    ✗ Не найден в БД`)
+    return null
+  }
+
+  // DEPRECATED: Старая функция addTag - теперь только ищет, не создаёт
+  addTag(tagName: string) {
+    return this.findTag(tagName)
   }
 
   // Связать вебинар с тегом
@@ -500,34 +630,72 @@ class DatabaseService {
   }
 
   // Получить или создать участника
-  getOrCreateParticipant(firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
-    // Сначала получаем или создаём компанию
-    const companyId = this.getOrCreateCompany(inn, companyName)
+  // Получить или создать участника по email (email - уникальный идентификатор участника)
+  getOrCreateParticipantByEmail(email: string, firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
+    // Сначала проверяем, существует ли участник с таким email
+    const emailResult = this.db!.exec('SELECT ID_email, ID_участника FROM Email WHERE Email = ?', [email])
     
-    // Ищем участника по компании, имени и фамилии
-    const result = this.db!.exec(`
-      SELECT ID_участника 
-      FROM Участники 
-      WHERE ID_компании = ? 
-        AND (Имя = ? OR (Имя IS NULL AND ? IS NULL))
-        AND (Фамилия = ? OR (Фамилия IS NULL AND ? IS NULL))
-    `, [companyId, firstName || null, firstName || null, lastName || null, lastName || null])
-
-    if (result.length > 0 && result[0].values.length > 0) {
-      const participantId = result[0].values[0][0] as number
+    if (emailResult.length > 0 && emailResult[0].values.length > 0) {
+      // Email существует - обновляем данные существующего участника
+      const participantId = emailResult[0].values[0][1] as number
       
-      // Обновляем телефон и должность если они были переданы
-      if (phone || position) {
-        this.db!.run(`UPDATE Участники SET Номер_телефона = ?, Должность = ? WHERE ID_участника = ?`, [
-          phone || null, 
-          position || null, 
-          participantId
-        ])
+      // Определяем ID компании
+      let companyId: number | null = null
+      if (inn && inn.trim() !== '') {
+        companyId = this.getOrCreateCompany(inn, companyName)
       }
+      
+      // Обновляем данные участника
+      this.db!.run(`
+        UPDATE Участники 
+        SET ID_компании = ?, Имя = ?, Фамилия = ?, Номер_телефона = ?, Должность = ?
+        WHERE ID_участника = ?
+      `, [
+        companyId,
+        firstName || null,
+        lastName || null,
+        phone || null,
+        position || null,
+        participantId
+      ])
       
       return participantId
     }
+    
+    // Email не существует - создаем нового участника
+    let companyId: number | null = null
+    if (inn && inn.trim() !== '') {
+      companyId = this.getOrCreateCompany(inn, companyName)
+    }
+    
+    // Создаём участника
+    this.db!.run(`
+      INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона, Должность) 
+      VALUES (?, ?, ?, ?, ?)
+    `, [
+      companyId,
+      firstName || null, 
+      lastName || null,
+      phone || null,
+      position || null
+    ])
+    const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
+    const participantId = idResult[0].values[0][0] as number
+    
+    // Создаём email и привязываем к участнику
+    this.db!.run('INSERT INTO Email (ID_участника, Email) VALUES (?, ?)', [participantId, email])
+    
+    return participantId
+  }
 
+  // DEPRECATED: Старая функция для обратной совместимости
+  getOrCreateParticipant(firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
+    // Если ИНН корректный - получаем/создаем компанию
+    let companyId: number | null = null
+    if (inn && inn.trim() !== '') {
+      companyId = this.getOrCreateCompany(inn, companyName)
+    }
+    
     // Создаём нового участника
     this.db!.run(`
       INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона, Должность) 
@@ -894,7 +1062,12 @@ class DatabaseService {
     const company = result[0]
     
     // Компания новая, если была только на 1 вебинаре
-    company.isNew = company.totalWebinars === 1
+    // Если вебинаров 0 - isNew будет null (не определено)
+    if (company.totalWebinars === 0) {
+      company.isNew = null
+    } else {
+      company.isNew = company.totalWebinars === 1
+    }
     
     // Получаем интересующие продукты (из тегов вебинаров, исключая служебные теги)
     const productsQuery = `
