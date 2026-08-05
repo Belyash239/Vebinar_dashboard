@@ -591,7 +591,9 @@ onMounted(() => {
   <div class="min-h-screen bg-gray-50">
     <header class="bg-white shadow-sm border-b">
       <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-        <h1 class="text-2xl font-semibold text-gray-900">Дашборд по вебинарам</h1>
+        <router-link to="/" class="text-2xl font-semibold text-gray-900 hover:text-gray-700 cursor-pointer">
+          Дашборд по вебинарам
+        </router-link>
         <router-link 
           to="/import"
           class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition"

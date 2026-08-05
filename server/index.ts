@@ -280,6 +280,55 @@ app.post('/api/export/tags', async (req, res) => {
   }
 })
 
+// Экспорт данных по ИНН
+app.post('/api/export/inn', upload.single('file'), async (req, res) => {
+  console.log('🔵 Получен запрос на экспорт по ИНН')
+  console.log('  req.file:', req.file)
+  console.log('  req.body:', req.body)
+  
+  try {
+    if (!req.file) {
+      console.log('❌ Файл не найден в запросе')
+      return res.status(400).json({ error: 'File is required' })
+    }
+
+    const filePath = req.file.path
+    const originalName = req.file.originalname
+    console.log('  Путь к файлу:', filePath)
+    console.log('  Оригинальное имя:', originalName)
+    
+    // Парсим ИНН из файла
+    const innList = await exportService.parseInnFile(filePath, originalName)
+    console.log(`  Найдено ИНН: ${innList.length}`)
+    
+    if (innList.length === 0) {
+      console.log('❌ Не найдено валидных ИНН')
+      // Удаляем временный файл
+      const fs = await import('fs')
+      fs.unlinkSync(filePath)
+      return res.status(400).json({ error: 'No valid INN found in file' })
+    }
+
+    console.log(`✅ Экспорт данных для ${innList.length} ИНН:`, innList.slice(0, 5))
+    
+    // Экспортируем данные
+    const buffer = await exportService.exportByInn(innList)
+    
+    // Удаляем временный файл
+    const fs = await import('fs')
+    fs.unlinkSync(filePath)
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=inn_export.xlsx`)
+    res.send(buffer)
+    
+    console.log('✅ Экспорт завершён успешно')
+  } catch (error) {
+    console.error('❌ Error exporting by INN:', error)
+    res.status(500).json({ error: 'Failed to export data by INN' })
+  }
+})
+
 // Получить сообщения чата
 app.get('/api/messages', (req, res) => {
   try {
@@ -436,8 +485,8 @@ app.post('/api/upload',
         finalWebinarName = `${webinarName}_${formattedDate}`
       }
 
-      // Создать вебинар с именем из файла и датой
-      webinarId = databaseService.createWebinar(finalWebinarName, webinarDate || new Date().toISOString().split('T')[0]) as number
+      // Создать или обновить вебинар с именем из файла и датой
+      webinarId = databaseService.createOrUpdateWebinar(finalWebinarName, webinarDate || new Date().toISOString().split('T')[0]) as number
 
       // Добавить теги
       if (tags) {

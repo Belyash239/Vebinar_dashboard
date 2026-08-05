@@ -687,6 +687,15 @@ class ParserService {
             if (existingWebinar.length > 0 && existingWebinar[0].values.length > 0) {
               currentWebinarId = existingWebinar[0].values[0][0] as number
               console.log(`  ✓ Найден в БД: ID ${currentWebinarId}`)
+              
+              // Обновляем дату существующего вебинара
+              if (webinarDate) {
+                db!.run(
+                  'UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?',
+                  [webinarDate, currentWebinarId]
+                )
+                console.log(`  ♻️ Обновлена дата вебинара: ${webinarDate}`)
+              }
             } else {
               currentWebinarId = databaseService.createWebinar(finalWebinarName, webinarDate) as number
               console.log(`  ✨ Создан новый: ID ${currentWebinarId}`)
@@ -720,6 +729,33 @@ class ParserService {
                   
                   console.log(`  📊 Итого привязано тегов: ${linkedCount} из ${tags.length}`)
                 }
+              }
+            }
+            
+            // Если вебинар уже существовал и есть теги, обрабатываем их
+            if (existingWebinar.length > 0 && mappedData['Теги']) {
+              const tagsStr = String(mappedData['Теги']).trim()
+              if (tagsStr) {
+                const tags = tagsStr
+                  .split(/[,;|\n\r]+/)
+                  .map(t => t.trim())
+                  .filter(t => t.length > 0)
+                
+                console.log(`  🏷️ Обработка тегов для существующего вебинара ${currentWebinarId}:`)
+                console.log(`    Исходная строка: "${tagsStr}"`)
+                console.log(`    Распарсено тегов: ${tags.length}`)
+                
+                let linkedCount = 0
+                for (const tagName of tags) {
+                  const tagId = databaseService.findTag(tagName)
+                  if (tagId) {
+                    // Используем INSERT OR IGNORE чтобы не дублировать теги
+                    databaseService.linkWebinarTag(currentWebinarId, tagId)
+                    linkedCount++
+                  }
+                }
+                
+                console.log(`  📊 Итого привязано тегов: ${linkedCount} из ${tags.length}`)
               }
             }
             

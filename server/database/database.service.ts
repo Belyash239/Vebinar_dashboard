@@ -300,6 +300,15 @@ class DatabaseService {
     const tagsResult = this.db!.exec(tagsQuery, [webinarId])
     webinar.tags = tagsResult[0]?.values[0]?.[0] || null
     
+    // Получаем количество зарегистрированных (все записи в "Участники-Вебинары")
+    const registeredQuery = `
+      SELECT COUNT(DISTINCT ID_участника) as count
+      FROM "Участники-Вебинары"
+      WHERE ID_вебинара = ?
+    `
+    const registeredResult = this.db!.exec(registeredQuery, [webinarId])
+    webinar.registeredCount = registeredResult[0]?.values[0]?.[0] || 0
+    
     // Получаем количество участников (>= 1 минуты)
     const participantQuery = `
       SELECT COUNT(DISTINCT ID_участника) as count
@@ -561,6 +570,42 @@ class DatabaseService {
     return result[0].values[0][0] as number
   }
 
+  // Найти вебинар по названию
+  findWebinarByName(name: string): number | null {
+    const result = this.db!.exec(
+      `SELECT ID_вебинара FROM Вебинары WHERE Название = ?`,
+      [name]
+    )
+    
+    if (result.length > 0 && result[0].values.length > 0) {
+      return result[0].values[0][0] as number
+    }
+    
+    return null
+  }
+
+  // Создать или обновить вебинар
+  createOrUpdateWebinar(name: string, date: string): number {
+    const existingId = this.findWebinarByName(name)
+    
+    if (existingId) {
+      // Обновляем дату существующего вебинара
+      this.db!.run(
+        `UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`,
+        [date, existingId]
+      )
+      console.log(`  ♻️ Обновлён существующий вебинар: "${name}" (ID: ${existingId})`)
+      return existingId
+    } else {
+      // Создаём новый вебинар
+      this.db!.run(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`, [name, date])
+      const result = this.db!.exec('SELECT last_insert_rowid() as id')
+      const newId = result[0].values[0][0] as number
+      console.log(`  ✨ Создан новый вебинар: "${name}" (ID: ${newId})`)
+      return newId
+    }
+  }
+
   // Обновить дату вебинара
   updateWebinarDate(webinarId: number, date: string) {
     this.db!.run(`UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`, [date, webinarId])
@@ -581,6 +626,23 @@ class DatabaseService {
     normalizedTagName = normalizedTagName.replace(/\s+/g, ' ')
     
     console.log(`    🔍 Ищем тег: "${normalizedTagName}"`)
+    
+    // Показываем что ищем после нормализации
+    const searchValue = normalizedTagName.toLowerCase().replace(/ё/g, 'е')
+    console.log(`    🔎 Поисковое значение после нормализации: "${searchValue}"`)
+    
+    // Показываем все теги в БД для отладки
+    const allTags = this.db!.exec(`SELECT ID_тега, Название_тега FROM Тег`)
+    if (allTags.length > 0 && allTags[0].values.length > 0) {
+      console.log(`    📋 Всего тегов в БД: ${allTags[0].values.length}`)
+      allTags[0].values.slice(0, 5).forEach((row: any) => {
+        const dbTagNormalized = String(row[1]).toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ')
+        console.log(`       - "${row[1]}" (ID: ${row[0]}) → нормализовано: "${dbTagNormalized}"`)
+      })
+      if (allTags[0].values.length > 5) {
+        console.log(`       ... и ещё ${allTags[0].values.length - 5} тегов`)
+      }
+    }
     
     // Ищем тег без учета регистра и ё/е
     const result = this.db!.exec(
@@ -1061,6 +1123,24 @@ class DatabaseService {
     
     const company = result[0]
     
+    // Если нет посещённых вебинаров (>= 1 мин), берём первый вебинар по регистрации
+    if (!company.firstWebinar || !company.firstWebinarId) {
+      const registeredWebinarQuery = `
+        SELECT w.ID_вебинара as id, w.Название as name
+        FROM "Участники-Вебинары" uw 
+        INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара 
+        INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
+        WHERE u.ID_компании = (SELECT ID_компании FROM Компания WHERE ИНН_компании = ?)
+        ORDER BY w.Дата ASC
+        LIMIT 1
+      `
+      const registeredResult = this.execQuery(registeredWebinarQuery, [inn])
+      if (registeredResult.length > 0) {
+        company.firstWebinarId = registeredResult[0].id
+        company.firstWebinar = registeredResult[0].name
+      }
+    }
+    
     // Компания новая, если была только на 1 вебинаре
     // Если вебинаров 0 - isNew будет null (не определено)
     if (company.totalWebinars === 0) {
@@ -1069,9 +1149,9 @@ class DatabaseService {
       company.isNew = company.totalWebinars === 1
     }
     
-    // Получаем интересующие продукты (из тегов вебинаров, исключая служебные теги)
+    // Получаем топ-3 интересующих продукта по количеству посещений (из тегов вебинаров, исключая служебные теги)
     const productsQuery = `
-      SELECT DISTINCT t.Название_тега as product
+      SELECT t.Название_тега as product, COUNT(DISTINCT uw.ID_вебинара) as visitCount
       FROM "Участники-Вебинары" uw
       INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
       INNER JOIN "Вебинары-Теги" wt ON uw.ID_вебинара = wt.ID_мероприятия
@@ -1083,7 +1163,9 @@ class DatabaseService {
           CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
           CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
         ) >= 1
-      ORDER BY t.Название_тега
+      GROUP BY t.Название_тега
+      ORDER BY visitCount DESC, t.Название_тега ASC
+      LIMIT 3
     `
     const products = this.execQuery(productsQuery, [inn])
     company.interestedProducts = products.map((p: any) => p.product)
@@ -1129,7 +1211,8 @@ class DatabaseService {
         e.Email as email,
         u.Имя as firstName,
         u.Фамилия as lastName,
-        u.Должность as position
+        u.Должность as position,
+        u.Номер_телефона as phone
       FROM Участники u
       INNER JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Email e ON u.ID_участника = e.ID_участника

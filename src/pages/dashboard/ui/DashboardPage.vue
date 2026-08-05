@@ -22,6 +22,10 @@ const surveyListRef = ref<InstanceType<typeof SurveyList> | null>(null)
 const selectedTags = ref<number[]>([])
 const tags = ref<Tag[]>([])
 const isExporting = ref(false)
+const exportType = ref<'tags' | 'inn'>('tags')
+const innFile = ref<File | null>(null)
+const innFileInput = ref<HTMLInputElement | null>(null)
+const isDragging = ref(false)
 
 const openImportModal = () => {
   showImportModal.value = true
@@ -94,6 +98,49 @@ const openExportModal = () => {
 const closeExportModal = () => {
   showExportModal.value = false
   selectedTags.value = []
+  exportType.value = 'tags'
+  innFile.value = null
+  if (innFileInput.value) {
+    innFileInput.value.value = ''
+  }
+}
+
+const handleInnFileChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  if (target.files && target.files[0]) {
+    innFile.value = target.files[0]
+  }
+}
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault()
+  isDragging.value = true
+}
+
+const handleDragLeave = (event: DragEvent) => {
+  event.preventDefault()
+  isDragging.value = false
+}
+
+const handleDrop = (event: DragEvent) => {
+  event.preventDefault()
+  isDragging.value = false
+  
+  const files = event.dataTransfer?.files
+  if (files && files.length > 0) {
+    const file = files[0]
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    
+    if (extension === 'txt' || extension === 'xlsx') {
+      innFile.value = file
+    } else {
+      alert('Пожалуйста, загрузите файл формата .txt или .xlsx')
+    }
+  }
+}
+
+const triggerFileInput = () => {
+  innFileInput.value?.click()
 }
 
 const fetchTags = async () => {
@@ -125,38 +172,84 @@ const toggleAllTags = () => {
 }
 
 const handleExport = async () => {
-  if (selectedTags.value.length === 0) {
-    alert('Выберите хотя бы один тег')
-    return
-  }
+  if (exportType.value === 'tags') {
+    if (selectedTags.value.length === 0) {
+      alert('Выберите хотя бы один тег')
+      return
+    }
 
-  isExporting.value = true
+    isExporting.value = true
 
-  try {
-    // Экспорт по тегам
-    const response = await fetch('http://localhost:3000/api/export/tags', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ tagIds: selectedTags.value })
-    })
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'tags_export.xlsx'
-    document.body.appendChild(a)
-    a.click()
-    window.URL.revokeObjectURL(url)
-    document.body.removeChild(a)
+    try {
+      const response = await fetch('http://localhost:3000/api/export/tags', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ tagIds: selectedTags.value })
+      })
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'tags_export.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
 
-    closeExportModal()
-  } catch (error) {
-    console.error('Error exporting:', error)
-    alert('Ошибка при экспорте данных')
-  } finally {
-    isExporting.value = false
+      closeExportModal()
+    } catch (error) {
+      console.error('Error exporting:', error)
+      alert('Ошибка при экспорте данных')
+    } finally {
+      isExporting.value = false
+    }
+  } else if (exportType.value === 'inn') {
+    if (!innFile.value) {
+      alert('Загрузите файл с ИНН')
+      return
+    }
+
+    isExporting.value = true
+
+    try {
+      const formData = new FormData()
+      formData.append('file', innFile.value)
+
+      console.log('Отправка файла на экспорт по ИНН:', innFile.value.name)
+
+      const response = await fetch('http://localhost:3000/api/export/inn', {
+        method: 'POST',
+        body: formData
+      })
+
+      console.log('Ответ сервера:', response.status, response.statusText)
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Ошибка от сервера:', errorData)
+        throw new Error(errorData.error || 'Export failed')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'inn_export.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      console.log('Экспорт завершён успешно')
+      closeExportModal()
+    } catch (error) {
+      console.error('Error exporting:', error)
+      alert(`Ошибка при экспорте данных по ИНН: ${error}`)
+    } finally {
+      isExporting.value = false
+    }
   }
 }
 </script>
@@ -165,12 +258,14 @@ const handleExport = async () => {
   <div class="min-h-screen bg-gray-50">
     <header class="bg-white shadow-sm border-b">
       <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-        <h1 class="text-2xl font-semibold text-gray-900">Дашборд по вебинарам</h1>
+        <router-link to="/" class="text-2xl font-semibold text-gray-900 hover:text-gray-700 cursor-pointer">
+          Дашборд по вебинарам
+        </router-link>
         <router-link 
-          to="/import"
+          to="/"
           class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition"
         >
-          Управление данными
+          Главная
         </router-link>
       </div>
     </header>
@@ -256,7 +351,7 @@ const handleExport = async () => {
       <div class="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div class="p-8">
           <div class="flex items-center justify-between mb-8">
-            <h2 class="text-3xl font-semibold text-gray-900">Экспорт чатов и вопросов</h2>
+            <h2 class="text-3xl font-semibold text-gray-900">Экспорт данных</h2>
             <button
               @click="closeExportModal"
               class="text-gray-400 hover:text-gray-600 text-2xl"
@@ -266,8 +361,34 @@ const handleExport = async () => {
           </div>
 
           <div class="space-y-6">
-            <!-- Выбор тегов -->
-            <div>
+            <!-- Переключатель типа экспорта -->
+            <div class="flex gap-4 border-b border-gray-200 pb-4">
+              <button
+                @click="exportType = 'tags'"
+                :class="[
+                  'px-4 py-2 rounded-lg font-medium transition',
+                  exportType === 'tags'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+              >
+                По тегам (чаты и вопросы)
+              </button>
+              <button
+                @click="exportType = 'inn'"
+                :class="[
+                  'px-4 py-2 rounded-lg font-medium transition',
+                  exportType === 'inn'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+              >
+                По ИНН
+              </button>
+            </div>
+
+            <!-- Экспорт по тегам -->
+            <div v-if="exportType === 'tags'">
               <div class="flex items-center justify-between mb-3">
                 <label class="block text-lg font-medium text-gray-900">
                   Выберите теги для экспорта
@@ -302,11 +423,82 @@ const handleExport = async () => {
               </div>
             </div>
 
+            <!-- Экспорт по ИНН -->
+            <div v-if="exportType === 'inn'" class="space-y-4">
+              <div>
+                <label class="block text-lg font-medium text-gray-900 mb-3">
+                  Загрузите файл с ИНН
+                </label>
+                <p class="text-sm text-gray-600 mb-4">
+                  Поддерживаемые форматы: .txt, .xlsx<br>
+                  ИНН должны быть записаны в столбик (каждый ИНН на новой строке или в отдельной ячейке)
+                </p>
+                
+                <!-- Drag & Drop зона -->
+                <div
+                  @dragover="handleDragOver"
+                  @dragleave="handleDragLeave"
+                  @drop="handleDrop"
+                  @click="triggerFileInput"
+                  :class="[
+                    'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition',
+                    isDragging
+                      ? 'border-blue-500 bg-blue-50'
+                      : innFile
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
+                  ]"
+                >
+                  <input
+                    ref="innFileInput"
+                    type="file"
+                    accept=".txt,.xlsx"
+                    @change="handleInnFileChange"
+                    class="hidden"
+                  />
+                  
+                  <div v-if="!innFile" class="flex flex-col items-center gap-3">
+                    <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <div>
+                      <p class="text-base font-medium text-gray-700">
+                        Перетащите файл сюда или <span class="text-blue-600">выберите файл</span>
+                      </p>
+                      <p class="text-sm text-gray-500 mt-1">
+                        .txt или .xlsx
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div v-else class="flex flex-col items-center gap-3">
+                    <svg class="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p class="text-base font-medium text-gray-700">
+                        {{ innFile.name }}
+                      </p>
+                      <p class="text-sm text-gray-500 mt-1">
+                        {{ (innFile.size / 1024).toFixed(2) }} КБ
+                      </p>
+                      <button
+                        @click.stop="innFile = null"
+                        class="mt-2 text-sm text-red-600 hover:text-red-800 font-medium"
+                      >
+                        Удалить файл
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Кнопка экспорта -->
             <div class="flex justify-end pt-4">
               <button
                 @click="handleExport"
-                :disabled="isExporting || selectedTags.length === 0"
+                :disabled="isExporting || (exportType === 'tags' && selectedTags.length === 0) || (exportType === 'inn' && !innFile)"
                 class="px-8 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {{ isExporting ? 'Экспорт...' : 'Экспортировать' }}

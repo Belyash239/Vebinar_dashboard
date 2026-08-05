@@ -11,6 +11,7 @@ interface WebinarDetail {
   date: string
   tags: string | null
   participantCount: number
+  registeredCount: number
   avgRetention: number
   conversion: number
 }
@@ -206,7 +207,9 @@ onMounted(() => {
   <div class="min-h-screen bg-gray-50">
     <header class="bg-white shadow-sm border-b">
       <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-        <h1 class="text-2xl font-semibold text-gray-900">Дашборд по вебинарам</h1>
+        <router-link to="/" class="text-2xl font-semibold text-gray-900 hover:text-gray-700 cursor-pointer">
+          Дашборд по вебинарам
+        </router-link>
         <router-link 
           to="/import"
           class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition"
@@ -241,16 +244,55 @@ onMounted(() => {
       <div v-else-if="webinar">
         <!-- Карточки метрик -->
         <section class="mb-8">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <!-- Кол-во зарегистрированных -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Зарегистрировано</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Общее количество зарегистрированных на вебинар
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ webinar.registeredCount }}</div>
+            </div>
+
             <!-- Кол-во участников -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Кол-во участников</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Посетило</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Количество участников, которые присутствовали на вебинаре >= 1 минуты
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-4xl font-bold text-gray-900">{{ webinar.participantCount }}</div>
             </div>
 
             <!-- Среднее удержание -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Среднее удержание</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Среднее удержание</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Средний процент присутствия от общей длительности мероприятия
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-4xl font-bold text-gray-900">{{ webinar.avgRetention }}%</div>
             </div>
 
