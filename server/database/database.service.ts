@@ -45,9 +45,17 @@ class DatabaseService {
   getStats() {
     const db = this.db!
     
-    // Всего вебинаров
-    const webinarsResult = db.exec('SELECT COUNT(*) as count FROM Вебинары')
-    const totalWebinars = webinarsResult[0]?.values[0]?.[0] as number || 0
+    // Общее количество посещений вебинаров (записи с присутствием >= 1 минуты)
+    const visitsResult = db.exec(`
+      SELECT COUNT(*) as count 
+      FROM "Участники-Вебинары"
+      WHERE (
+        CAST(SUBSTR(Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+        CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+        CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+      ) >= 1
+    `)
+    const totalWebinars = visitsResult[0]?.values[0]?.[0] as number || 0
     
     // Среднее кол-во участников (которые были хотя бы 1 минуту)
     // Присутствие_относительно_длительности хранится как текст "HH:MM:SS"
@@ -125,13 +133,18 @@ class DatabaseService {
     `)
     const popularProduct = popularProductResult[0]?.values[0]?.[0] as string || 'Нет данных'
     
+    // Среднее количество посещённых вебинаров на человека
+    // = общее количество посещений / количество уникальных участников
+    const avgWebinarsPerPerson = totalUsers > 0 ? totalWebinars / totalUsers : 0
+    
     return {
       totalWebinars,
       avgParticipants: Math.round(avgParticipants),
       avgConversion: Math.round(avgConversion),
       avgRetention: Math.round(avgRetention),
       totalUsers,
-      popularProduct
+      popularProduct,
+      avgWebinarsPerPerson: Math.round(avgWebinarsPerPerson * 10) / 10 // округляем до 1 знака после запятой
     }
   }
 
@@ -361,7 +374,10 @@ class DatabaseService {
         c.ИНН_компании as inn,
         uw.Имя_в_чате as chatName,
         GROUP_CONCAT(DISTINCT e.Email) as emails,
-        COALESCE(uw.Присутствие_от_общей_длительности, 0) as retention,
+        COALESCE(
+          CAST(REPLACE(REPLACE(uw.Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL),
+          0
+        ) as retention,
         (SELECT GROUP_CONCAT(t2.Название_тега, ', ')
          FROM "Вебинары-Теги" wt2
          INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
@@ -373,11 +389,6 @@ class DatabaseService {
       LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Email e ON u.ID_участника = e.ID_участника
       WHERE uw.ID_вебинара = ?
-        AND (
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
-        ) >= 1
       GROUP BY u.ID_участника, c.ИНН_компании, uw.Имя_в_чате, uw.Присутствие_от_общей_длительности
       ORDER BY retention DESC
     `
@@ -470,17 +481,20 @@ class DatabaseService {
         uw.utm_source as utmSource,
         uw.utm_medium as utmMedium,
         uw.utm_campaign as utmCampaign,
-        uw.utm_content as utmContent
+        uw.utm_content as utmContent,
+        CASE 
+          WHEN (
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+          ) >= 1 THEN 1
+          ELSE 0
+        END as attended
       FROM "Участники-Вебинары" uw
       INNER JOIN Email e ON uw.ID_участника = e.ID_участника
       INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
       WHERE e.Email = ?
-        AND (
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
-        ) >= 1
-      GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_source, uw.utm_medium, uw.utm_campaign, uw.utm_content
+      GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_source, uw.utm_medium, uw.utm_campaign, uw.utm_content, uw.Присутствие_относительно_длительности
       ORDER BY w.Дата DESC
     `
     return this.execQuery(query, [email])
@@ -1187,19 +1201,22 @@ class DatabaseService {
           WHERE wt2.ID_мероприятия = w.ID_вебинара
         ) as tags,
         uw.utm_campaign as utmCampaign,
-        uw.utm_medium as utmMedium
+        uw.utm_medium as utmMedium,
+        CASE 
+          WHEN (
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+            CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+          ) >= 1 THEN 1
+          ELSE 0
+        END as attended
       FROM "Участники-Вебинары" uw
       INNER JOIN Участники u ON uw.ID_участника = u.ID_участника
       INNER JOIN Компания c ON u.ID_компании = c.ID_компании
       INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
       WHERE c.ИНН_компании = ?
-        AND (
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
-        ) >= 1
       GROUP BY w.ID_вебинара, w.Название, w.Дата, uw.utm_campaign, uw.utm_medium
-      ORDER BY w.Дата DESC
+      ORDER BY attended DESC, w.Дата DESC
     `
     return this.execQuery(query, [inn])
   }

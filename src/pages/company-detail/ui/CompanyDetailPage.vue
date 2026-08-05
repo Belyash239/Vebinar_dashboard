@@ -21,6 +21,7 @@ interface CompanyWebinar {
   tags: string
   utmCampaign: string | null
   utmMedium: string | null
+  attended: number
 }
 
 interface CompanyParticipant {
@@ -243,7 +244,18 @@ onMounted(() => {
           <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <!-- Первый вебинар -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Первый вебинар</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Первый вебинар</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Первый вебинар, который посетили участники компании (или зарегистрировались, если не было посещений)
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-lg text-gray-900">
                 <router-link 
                   v-if="company.firstWebinarId && company.firstWebinar"
@@ -258,24 +270,46 @@ onMounted(() => {
 
             <!-- Среднее удержание -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Среднее удержание</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Среднее удержание</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Средний процент присутствия участников компании на вебинарах
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-lg text-gray-900">{{ company.avgRetention }}%</div>
             </div>
 
             <!-- Интересующие продукты -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Интересующие продукты</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Интересующие продукты</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Топ-3 продукта по количеству посещений вебинаров компанией
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-lg text-gray-900">{{ company.interestedProducts.join(', ') || '—' }}</div>
             </div>
           </div>
         </section>
 
-        <!-- Список посещенных вебинаров -->
+        <!-- Список вебинаров -->
         <section class="mb-8">
           <div class="bg-white rounded-lg shadow">
             <div class="p-6">
               <div class="flex items-center justify-between mb-6">
-                <h2 class="text-xl font-semibold text-gray-900">Список посещённых вебинаров</h2>
+                <h2 class="text-xl font-semibold text-gray-900">Список вебинаров</h2>
                 
                 <div class="flex items-center gap-4">
                   <button
@@ -313,6 +347,9 @@ onMounted(() => {
                         Название
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Посетил
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
                         utm_campaign
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
@@ -328,13 +365,13 @@ onMounted(() => {
                   </thead>
                   <tbody>
                     <tr v-if="webinars.length === 0 && webinarSearchQuery">
-                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="6" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет вебинаров, соответствующих поиску
                       </td>
                     </tr>
                     <tr v-else-if="webinars.length === 0">
-                      <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
-                        Нет посещенных вебинаров
+                      <td colspan="6" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет вебинаров
                       </td>
                     </tr>
                     <tr v-else v-for="webinar in webinars" :key="webinar.webinarId" class="border-b border-gray-100 hover:bg-gray-50">
@@ -345,6 +382,9 @@ onMounted(() => {
                         >
                           {{ webinar.webinarName }}
                         </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ webinar.attended === 1 ? 'Да' : 'Нет' }}
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ webinar.utmCampaign || '—' }}

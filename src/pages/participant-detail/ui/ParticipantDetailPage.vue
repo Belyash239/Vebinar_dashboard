@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -25,6 +25,7 @@ interface ParticipantWebinar {
   utmMedium: string | null
   utmCampaign: string | null
   utmContent: string | null
+  attended: number
 }
 
 interface ChatMessage {
@@ -173,6 +174,15 @@ const getParticipantName = () => {
   }
 }
 
+// Подсчет посещённых вебинаров
+const attendedCount = computed(() => {
+  return allWebinars.value.filter(w => w.attended === 1).length
+})
+
+const totalWebinarsCount = computed(() => {
+  return allWebinars.value.length
+})
+
 const loadData = async () => {
   isLoading.value = true
   await Promise.all([
@@ -277,12 +287,15 @@ onMounted(() => {
           </div>
         </section>
 
-        <!-- Список посещенных вебинаров -->
+        <!-- Список вебинаров -->
         <section class="mb-8">
           <div class="bg-white rounded-lg shadow">
             <div class="p-6">
               <div class="flex items-center justify-between mb-6">
-                <h2 class="text-xl font-semibold text-gray-900">Список посещенных вебинаров</h2>
+                <h2 class="text-xl font-semibold text-gray-900">
+                  Список вебинаров 
+                  <span class="text-sm font-normal text-gray-500">(Посещено: {{ attendedCount }} из {{ totalWebinarsCount }})</span>
+                </h2>
                 
                 <div class="flex items-center gap-4">
                   <button
@@ -320,6 +333,9 @@ onMounted(() => {
                         Название
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
+                        Посетил
+                      </th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
                         utm_source
                       </th>
                       <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">
@@ -341,13 +357,13 @@ onMounted(() => {
                   </thead>
                   <tbody>
                     <tr v-if="webinars.length === 0 && searchQuery">
-                      <td colspan="7" class="px-6 py-8 text-center text-sm text-gray-500">
+                      <td colspan="8" class="px-6 py-8 text-center text-sm text-gray-500">
                         Нет вебинаров, соответствующих поиску
                       </td>
                     </tr>
                     <tr v-else-if="webinars.length === 0">
-                      <td colspan="7" class="px-6 py-8 text-center text-sm text-gray-500">
-                        Нет посещенных вебинаров
+                      <td colspan="8" class="px-6 py-8 text-center text-sm text-gray-500">
+                        Нет вебинаров
                       </td>
                     </tr>
                     <tr v-else v-for="webinar in webinars" :key="webinar.webinarId" class="border-b border-gray-100 hover:bg-gray-50">
@@ -358,6 +374,9 @@ onMounted(() => {
                         >
                           {{ webinar.webinarName }}
                         </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ webinar.attended === 1 ? 'Да' : 'Нет' }}
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ webinar.utmSource || '—' }}

@@ -12,6 +12,7 @@ interface Stats {
   avgRetention: number
   totalUsers: number
   popularProduct: string
+  avgWebinarsPerPerson: number
 }
 
 interface TimelineData {
@@ -47,7 +48,8 @@ const stats = ref<Stats>({
   avgConversion: 0,
   avgRetention: 0,
   totalUsers: 0,
-  popularProduct: 'Нет данных'
+  popularProduct: 'Нет данных',
+  avgWebinarsPerPerson: 0
 })
 
 const timelineData = ref<TimelineData[]>([])
@@ -612,41 +614,124 @@ onMounted(() => {
         <!-- Карточки метрик -->
         <section class="mb-8">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <!-- Всего вебинаров -->
+            <!-- Всего посещений -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Всего вебинаров</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Всего посещений</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Общее количество посещений вебинаров (присутствие >= 1 минуты)
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-4xl font-bold text-gray-900">{{ stats.totalWebinars }}</div>
-            </div>
-
-            <!-- Среднее кол-во участников -->
-            <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Среднее кол-во участников</div>
-              <div class="text-4xl font-bold text-gray-900">{{ stats.avgParticipants }}</div>
-            </div>
-
-            <!-- Средняя конверсия -->
-            <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Средняя конверсия</div>
-              <div class="text-4xl font-bold text-gray-900">{{ stats.avgConversion }}%</div>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Среднее удержание -->
-            <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Среднее удержание</div>
-              <div class="text-4xl font-bold text-gray-900">{{ stats.avgRetention }}%</div>
             </div>
 
             <!-- Всего уникальных пользователей -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Всего уникальных пользователей</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Всего уникальных пользователей</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Общее количество уникальных участников в системе
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-4xl font-bold text-gray-900">{{ stats.totalUsers }}</div>
+            </div>
+
+            <!-- Средняя конверсия -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Средняя конверсия</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Средний процент зарегистрированных, которые посетили вебинары
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgConversion }}%</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <!-- Среднее удержание -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Среднее удержание</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Средний процент присутствия участников на вебинарах
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgRetention }}%</div>
+            </div>
+
+            <!-- Среднее кол-во участников -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Среднее кол-во участников</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Среднее количество участников на одном вебинаре
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgParticipants }}</div>
+            </div>
+
+            <!-- Среднее количество посещённых вебинаров на человека -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Среднее кол-во посещённых вебинаров на человека</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Отношение общего числа посещений к числу уникальных участников
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.avgWebinarsPerPerson }}</div>
             </div>
 
             <!-- Наиболее популярный продукт -->
             <div class="bg-white rounded-lg shadow p-6">
-              <div class="text-sm text-gray-600 mb-2">Наиболее популярный продукт</div>
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Наиболее популярный продукт</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Продукт с наибольшим средним удержанием участников
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
               <div class="text-2xl font-bold text-gray-900 mt-3">{{ stats.popularProduct }}</div>
             </div>
           </div>
