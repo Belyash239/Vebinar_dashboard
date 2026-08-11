@@ -11,6 +11,7 @@ interface Stats {
   avgConversion: number
   avgRetention: number
   totalUsers: number
+  totalRegistrations: number
   popularProduct: string
   avgWebinarsPerPerson: number
 }
@@ -42,12 +43,45 @@ interface UniqueUser {
   products: string
 }
 
+interface TopCompany {
+  inn: string
+  companyName: string
+  employeeCount: number
+  employees: {
+    email: string
+    position: string
+    date: string
+    webinarName: string
+    webinarId: number
+  }[]
+}
+
+interface TopWebinar {
+  id: number
+  name: string
+  date: string
+  registeredCount: number
+  attendedCount: number
+  conversion: number
+}
+
+interface TopClient {
+  email: string
+  firstName: string | null
+  lastName: string | null
+  inn: string | null
+  companyName: string | null
+  position: string | null
+  visitsCount: number
+}
+
 const stats = ref<Stats>({
   totalWebinars: 0,
   avgParticipants: 0,
   avgConversion: 0,
   avgRetention: 0,
   totalUsers: 0,
+  totalRegistrations: 0,
   popularProduct: 'Нет данных',
   avgWebinarsPerPerson: 0
 })
@@ -58,6 +92,11 @@ const webinars = ref<Webinar[]>([])
 const allWebinars = ref<Webinar[]>([])
 const uniqueUsers = ref<UniqueUser[]>([])
 const allUniqueUsers = ref<UniqueUser[]>([])
+const topCompanies = ref<TopCompany[]>([])
+const topWebinars = ref<TopWebinar[]>([])
+const topClients = ref<TopClient[]>([])
+const webinarSortBy = ref<'attended' | 'registered' | 'conversion'>('attended')
+const expandedCompanies = ref<Set<string>>(new Set())
 const searchQuery = ref('')
 const userSearchQuery = ref('')
 const availableTags = ref<string[]>([])
@@ -158,6 +197,50 @@ const fetchUniqueUsers = async () => {
   } finally {
     isLoadingUsers.value = false
   }
+}
+
+const fetchTopCompanies = async () => {
+  try {
+    const response = await fetch('http://localhost:3000/api/top-companies')
+    topCompanies.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching top companies:', error)
+  }
+}
+
+const fetchTopWebinars = async () => {
+  try {
+    const response = await fetch(`http://localhost:3000/api/top-webinars?limit=20&sortBy=${webinarSortBy.value}`)
+    topWebinars.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching top webinars:', error)
+  }
+}
+
+const fetchTopClients = async () => {
+  try {
+    const response = await fetch('http://localhost:3000/api/top-clients?limit=20')
+    topClients.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching top clients:', error)
+  }
+}
+
+const changeWebinarSort = async (sortBy: 'attended' | 'registered' | 'conversion') => {
+  webinarSortBy.value = sortBy
+  await fetchTopWebinars()
+}
+
+const toggleCompany = (inn: string) => {
+  if (expandedCompanies.value.has(inn)) {
+    expandedCompanies.value.delete(inn)
+  } else {
+    expandedCompanies.value.add(inn)
+  }
+}
+
+const isCompanyExpanded = (inn: string) => {
+  return expandedCompanies.value.has(inn)
 }
 
 const applyWebinarFilters = () => {
@@ -575,7 +658,10 @@ const loadData = async () => {
     fetchTimelineData(),
     fetchTotalVisitorsData(),
     fetchWebinars(),
-    fetchUniqueUsers()
+    fetchUniqueUsers(),
+    fetchTopCompanies(),
+    fetchTopWebinars(),
+    fetchTopClients()
   ])
   isLoading.value = false
   
@@ -613,22 +699,22 @@ onMounted(() => {
       <div v-else>
         <!-- Карточки метрик -->
         <section class="mb-8">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <!-- Всего посещений -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <!-- Всего регистраций -->
             <div class="bg-white rounded-lg shadow p-6">
               <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
-                <span>Всего посещений</span>
+                <span>Всего регистраций</span>
                 <div class="relative group">
                   <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
-                    Общее количество посещений вебинаров (присутствие >= 1 минуты)
+                    Общее количество регистраций на все вебинары
                     <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                   </div>
                 </div>
               </div>
-              <div class="text-4xl font-bold text-gray-900">{{ stats.totalWebinars }}</div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.totalRegistrations }}</div>
             </div>
 
             <!-- Всего уникальных пользователей -->
@@ -664,9 +750,7 @@ onMounted(() => {
               </div>
               <div class="text-4xl font-bold text-gray-900">{{ stats.avgConversion }}%</div>
             </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            
             <!-- Среднее удержание -->
             <div class="bg-white rounded-lg shadow p-6">
               <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
@@ -682,6 +766,25 @@ onMounted(() => {
                 </div>
               </div>
               <div class="text-4xl font-bold text-gray-900">{{ stats.avgRetention }}%</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <!-- Всего посещений -->
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                <span>Всего посещений</span>
+                <div class="relative group">
+                  <svg class="w-4 h-4 text-gray-400 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                    Общее количество посещений вебинаров (присутствие >= 1 минуты)
+                    <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-4xl font-bold text-gray-900">{{ stats.totalWebinars }}</div>
             </div>
 
             <!-- Среднее кол-во участников -->
@@ -855,6 +958,304 @@ onMounted(() => {
                       </td>
                       <td class="px-6 py-4 text-sm text-gray-600">
                         {{ formatDate(webinar.date) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Топ вебинаров по посещениям -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold text-gray-900">Топ-20 вебинаров</h2>
+                
+                <!-- Кнопки выбора критерия сортировки -->
+                <div class="flex items-center gap-2">
+                  <span class="text-sm text-gray-600 mr-2">Сортировка:</span>
+                  <button
+                    @click="changeWebinarSort('attended')"
+                    class="px-3 py-1.5 text-sm rounded-lg transition"
+                    :class="webinarSortBy === 'attended' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                  >
+                    По посещениям
+                  </button>
+                  <button
+                    @click="changeWebinarSort('registered')"
+                    class="px-3 py-1.5 text-sm rounded-lg transition"
+                    :class="webinarSortBy === 'registered' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                  >
+                    По регистрациям
+                  </button>
+                  <div class="relative group">
+                    <button
+                      @click="changeWebinarSort('conversion')"
+                      class="px-3 py-1.5 text-sm rounded-lg transition"
+                      :class="webinarSortBy === 'conversion' 
+                        ? 'bg-blue-600 text-white' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                    >
+                      По конверсии
+                    </button>
+                    <div class="absolute left-1/2 transform -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
+                      Средний процент зарегистрированных, которые посетили вебинары
+                      <div class="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div v-if="topWebinars.length === 0" class="text-center py-8 text-gray-500">
+                Нет данных о вебинарах
+              </div>
+
+              <div v-else class="overflow-x-auto">
+                <table class="w-full">
+                  <thead class="bg-gray-50">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 w-12">#</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">Название вебинара</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 text-center">Дата</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 text-center">Зарегистрировано</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 text-center">Посетило</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 text-center">Конверсия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr 
+                      v-for="(webinar, index) in topWebinars" 
+                      :key="webinar.id"
+                      class="border-b border-gray-100 hover:bg-gray-50"
+                    >
+                      <td class="px-6 py-4 text-sm text-gray-500 font-medium">
+                        {{ index + 1 }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          :to="`/webinar/${webinar.id}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {{ webinar.name }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600 text-center">
+                        {{ formatDate(webinar.date) }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900 text-center">
+                        {{ webinar.registeredCount }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900 text-center">
+                        {{ webinar.attendedCount }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900 text-center">
+                        {{ webinar.conversion }}%
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Топ-20 компаний с 5+ сотрудниками -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <h2 class="text-xl font-semibold text-gray-900 mb-6">Топ-20 компаний (более 5 сотрудников посетили вебинары)</h2>
+              
+              <div v-if="topCompanies.length === 0" class="text-center py-8 text-gray-500">
+                Нет компаний, соответствующих критериям
+              </div>
+
+              <div v-else class="space-y-4">
+                <div 
+                  v-for="(company, index) in topCompanies" 
+                  :key="company.inn"
+                  class="border border-gray-200 rounded-lg overflow-hidden"
+                >
+                  <!-- Заголовок компании -->
+                  <div 
+                    @click="toggleCompany(company.inn)"
+                    class="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <div class="flex items-center gap-4">
+                      <div class="text-lg font-semibold text-gray-400 w-8">
+                        {{ index + 1 }}
+                      </div>
+                      <div>
+                        <router-link 
+                          :to="`/company/${encodeURIComponent(company.inn)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                          @click.stop
+                        >
+                          {{ company.companyName }}
+                        </router-link>
+                        <div class="text-sm text-gray-500">
+                          ИНН: 
+                          <router-link 
+                            :to="`/company/${encodeURIComponent(company.inn)}`"
+                            class="text-blue-600 hover:text-blue-800 hover:underline"
+                            @click.stop
+                          >
+                            {{ company.inn }}
+                          </router-link>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                      <div class="text-right">
+                        <div class="text-sm text-gray-600">Сотрудников посетило</div>
+                        <div class="text-2xl font-bold text-gray-900">{{ company.employeeCount }}</div>
+                      </div>
+                      <svg 
+                        class="w-5 h-5 text-gray-400 transition-transform"
+                        :class="{ 'rotate-180': isCompanyExpanded(company.inn) }"
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  <!-- Список сотрудников -->
+                  <div v-if="isCompanyExpanded(company.inn)" class="border-t border-gray-200 bg-gray-50">
+                    <div class="p-4">
+                      <div class="border border-gray-200 rounded">
+                        <table class="w-full table-fixed">
+                          <colgroup>
+                            <col style="width: 25%;">
+                            <col style="width: 20%;">
+                            <col style="width: 35%;">
+                            <col style="width: 20%;">
+                          </colgroup>
+                          <thead class="bg-gray-100">
+                            <tr class="text-left text-sm text-gray-600 border-b border-gray-200">
+                              <th class="pb-2 pt-2 px-3">Email</th>
+                              <th class="pb-2 pt-2 px-3">Должность</th>
+                              <th class="pb-2 pt-2 px-3">Вебинар</th>
+                              <th class="pb-2 pt-2 px-3 text-center">Дата посещения</th>
+                            </tr>
+                          </thead>
+                        </table>
+                        
+                        <!-- Прокручиваемое тело таблицы -->
+                        <div class="max-h-80 overflow-y-auto">
+                          <table class="w-full table-fixed">
+                            <colgroup>
+                              <col style="width: 25%;">
+                              <col style="width: 20%;">
+                              <col style="width: 35%;">
+                              <col style="width: 20%;">
+                            </colgroup>
+                            <tbody>
+                              <tr 
+                                v-for="(employee, idx) in company.employees" 
+                                :key="`${employee.email}-${idx}`"
+                                class="text-sm border-b border-gray-100 last:border-0 hover:bg-gray-50"
+                              >
+                                <td class="py-2 px-3 break-words">
+                                  <router-link 
+                                    :to="`/participant/${encodeURIComponent(employee.email)}`"
+                                    class="text-blue-600 hover:text-blue-800 hover:underline"
+                                  >
+                                    {{ employee.email }}
+                                  </router-link>
+                                </td>
+                                <td class="py-2 px-3 text-gray-700 break-words">
+                                  {{ employee.position }}
+                                </td>
+                                <td class="py-2 px-3 break-words">
+                                  <router-link 
+                                    :to="`/webinar/${employee.webinarId}`"
+                                    class="text-blue-600 hover:text-blue-800 hover:underline"
+                                  >
+                                    {{ employee.webinarName }}
+                                  </router-link>
+                                </td>
+                                <td class="py-2 px-3 text-gray-600 text-center">
+                                  {{ formatDate(employee.date) }}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Топ-20 клиентов по посещениям -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <h2 class="text-xl font-semibold text-gray-900 mb-6">Топ-20 клиентов по посещениям</h2>
+              
+              <div v-if="topClients.length === 0" class="text-center py-8 text-gray-500">
+                Нет данных о клиентах
+              </div>
+
+              <div v-else class="overflow-x-auto">
+                <table class="w-full">
+                  <thead class="bg-gray-50">
+                    <tr class="border-b border-gray-200">
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 w-12">#</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">Email</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">Имя</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">Компания</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500">Должность</th>
+                      <th class="px-6 py-3 text-left text-sm font-medium text-gray-500 text-center">Посещений</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr 
+                      v-for="(client, index) in topClients" 
+                      :key="client.email"
+                      class="border-b border-gray-100 hover:bg-gray-50"
+                    >
+                      <td class="px-6 py-4 text-sm text-gray-500 font-medium">
+                        {{ index + 1 }}
+                      </td>
+                      <td class="px-6 py-4 text-sm">
+                        <router-link 
+                          :to="`/participant/${encodeURIComponent(client.email)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {{ client.email }}
+                        </router-link>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        {{ client.firstName && client.lastName ? `${client.firstName} ${client.lastName}` : '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900">
+                        <router-link 
+                          v-if="client.inn"
+                          :to="`/company/${encodeURIComponent(client.inn)}`"
+                          class="text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {{ client.companyName || client.inn }}
+                        </router-link>
+                        <span v-else>—</span>
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-600">
+                        {{ client.position || '—' }}
+                      </td>
+                      <td class="px-6 py-4 text-sm text-gray-900 text-center font-semibold">
+                        {{ client.visitsCount }}
                       </td>
                     </tr>
                   </tbody>

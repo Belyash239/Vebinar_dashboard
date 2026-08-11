@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS "Участники-Вебинары" (
   utm_medium TEXT,
   utm_campaign TEXT,
   utm_content TEXT,
+  utm_term TEXT,
+  utm_custom TEXT,
   Платформа TEXT,
   Страна TEXT,
   Город TEXT,

@@ -29,6 +29,42 @@ app.get('/api/stats', (req, res) => {
   }
 })
 
+// Получить топ-20 компаний с более 5 сотрудниками
+app.get('/api/top-companies', (req, res) => {
+  try {
+    const companies = databaseService.getTopCompaniesWithEmployees()
+    res.json(companies)
+  } catch (error) {
+    console.error('Error fetching top companies:', error)
+    res.status(500).json({ error: 'Failed to fetch top companies' })
+  }
+})
+
+// Получить топ вебинаров по посещениям
+app.get('/api/top-webinars', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 20
+    const sortBy = (req.query.sortBy as string) || 'attended'
+    const webinars = databaseService.getTopWebinarsByAttendance(limit, sortBy)
+    res.json(webinars)
+  } catch (error) {
+    console.error('Error fetching top webinars:', error)
+    res.status(500).json({ error: 'Failed to fetch top webinars' })
+  }
+})
+
+// Получить топ клиентов по посещениям
+app.get('/api/top-clients', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 20
+    const clients = databaseService.getTopClientsByVisits(limit)
+    res.json(clients)
+  } catch (error) {
+    console.error('Error fetching top clients:', error)
+    res.status(500).json({ error: 'Failed to fetch top clients' })
+  }
+})
+
 // Получить участников
 app.get('/api/participants', (req, res) => {
   try {
@@ -280,6 +316,37 @@ app.post('/api/export/tags', async (req, res) => {
   }
 })
 
+// Экспорт чатов и вопросов по должностям
+app.post('/api/export/positions', async (req, res) => {
+  try {
+    const { positions } = req.body
+    
+    if (!positions || !Array.isArray(positions) || positions.length === 0) {
+      return res.status(400).json({ error: 'Positions are required' })
+    }
+
+    const buffer = await exportService.exportByPositions(positions)
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=positions_export.xlsx`)
+    res.send(buffer)
+  } catch (error) {
+    console.error('Error exporting by positions:', error)
+    res.status(500).json({ error: 'Failed to export data' })
+  }
+})
+
+// Получить список всех должностей
+app.get('/api/positions', (req, res) => {
+  try {
+    const positions = databaseService.getAllPositions()
+    res.json(positions)
+  } catch (error) {
+    console.error('Error fetching positions:', error)
+    res.status(500).json({ error: 'Failed to fetch positions' })
+  }
+})
+
 // Экспорт данных по ИНН
 app.post('/api/export/inn', upload.single('file'), async (req, res) => {
   console.log('🔵 Получен запрос на экспорт по ИНН')
@@ -456,14 +523,16 @@ app.post('/api/upload',
     { name: 'mainFile', maxCount: 1 },
     { name: 'questionsFile', maxCount: 1 },
     { name: 'chatFile', maxCount: 1 },
-    { name: 'surveyFile', maxCount: 1 }
+    { name: 'surveyFile', maxCount: 1 },
+    { name: 'attendanceFile', maxCount: 1 } // Для Proofix
   ]),
   async (req, res) => {
     let webinarId: number | null = null
     
     try {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] }
-      const { tags, importPositions } = req.body
+      const { tags, importPositions, fileFormat, webinarName: userWebinarName, webinarDate: userWebinarDate } = req.body
+      const format = fileFormat || 'mts' // По умолчанию МТС-линк
 
       if (!files.mainFile) {
         return res.status(400).json({ error: 'Main file is required' })
@@ -471,7 +540,11 @@ app.post('/api/upload',
 
       // Парсить основной файл и получить название вебинара и дату
       const mainFilePath = files.mainFile[0].path
-      const { webinarName, webinarDate } = await parserService.parseMainFile(mainFilePath, null)
+      const { webinarName: parsedWebinarName, webinarDate: parsedWebinarDate } = await parserService.parseMainFile(mainFilePath, null, format)
+      
+      // Для Proofix используем название и дату из формы, для МТС-линк из файла
+      const webinarName = format === 'proofix' ? userWebinarName : (parsedWebinarName || userWebinarName)
+      const webinarDate = format === 'proofix' ? userWebinarDate : (parsedWebinarDate || userWebinarDate)
       
       if (!webinarName) {
         return res.status(400).json({ error: 'Webinar name not found in the main file' })
@@ -500,23 +573,30 @@ app.post('/api/upload',
       }
 
       // Повторно парсить основной файл с ID вебинара
-      await parserService.parseMainFile(mainFilePath, webinarId)
+      await parserService.parseMainFile(mainFilePath, webinarId, format)
 
-      if (files.questionsFile) {
+      // Для Proofix: парсим файл присутствия
+      if (format === 'proofix' && files.attendanceFile) {
+        const attendanceFilePath = files.attendanceFile[0].path
+        await parserService.parseProofixAttendanceFile(attendanceFilePath, webinarId)
+      }
+
+      // Для МТС-линк: парсим файл вопросов
+      if (format === 'mts' && files.questionsFile) {
         const questionsFilePath = files.questionsFile[0].path
-        await parserService.parseQuestionsFile(questionsFilePath, webinarId)
+        await parserService.parseQuestionsFile(questionsFilePath, webinarId, format)
       }
 
       if (files.chatFile) {
         const chatFilePath = files.chatFile[0].path
-        await parserService.parseChatFile(chatFilePath, webinarId)
+        await parserService.parseChatFile(chatFilePath, webinarId, format)
       }
 
       // Парсить файл опросов если загружен
       if (files.surveyFile) {
         const surveyFilePath = files.surveyFile[0].path
         const shouldImportPositions = importPositions === 'true'
-        await parserService.parseSurveyFile(surveyFilePath, webinarId, shouldImportPositions)
+        await parserService.parseSurveyFile(surveyFilePath, webinarId, shouldImportPositions, format)
       }
 
       // Сохраняем БД один раз в конце

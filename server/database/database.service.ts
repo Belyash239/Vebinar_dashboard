@@ -13,9 +13,35 @@ class DatabaseService {
     if (existsSync(this.dbPath)) {
       const buffer = readFileSync(this.dbPath)
       this.db = new SQL.Database(buffer)
+      await this.runMigrations()
     } else {
       this.db = new SQL.Database()
       await this.initDatabase()
+    }
+  }
+
+  private async runMigrations() {
+    // Миграция: добавление utm_term и utm_custom
+    try {
+      // Проверяем существование колонок
+      const tableInfo = this.db!.exec(`PRAGMA table_info("Участники-Вебинары")`)
+      const columns = tableInfo[0]?.values.map((row: any) => row[1]) || []
+      
+      if (!columns.includes('utm_term')) {
+        console.log('Добавление колонки utm_term...')
+        this.db!.exec(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_term TEXT`)
+        this.save()
+        console.log('✓ Колонка utm_term добавлена')
+      }
+      
+      if (!columns.includes('utm_custom')) {
+        console.log('Добавление колонки utm_custom...')
+        this.db!.exec(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_custom TEXT`)
+        this.save()
+        console.log('✓ Колонка utm_custom добавлена')
+      }
+    } catch (error) {
+      console.error('Ошибка при миграции:', error)
     }
   }
 
@@ -111,6 +137,10 @@ class DatabaseService {
     const usersResult = db.exec('SELECT COUNT(DISTINCT ID_участника) as count FROM Участники')
     const totalUsers = usersResult[0]?.values[0]?.[0] as number || 0
     
+    // Всего регистраций на вебинары
+    const registrationsResult = db.exec('SELECT COUNT(*) as count FROM "Участники-Вебинары"')
+    const totalRegistrations = registrationsResult[0]?.values[0]?.[0] as number || 0
+    
     // Наиболее популярный продукт (тег с наибольшим средним удержанием)
     const popularProductResult = db.exec(`
       SELECT t.Название_тега as tag, 
@@ -143,6 +173,7 @@ class DatabaseService {
       avgConversion: Math.round(avgConversion),
       avgRetention: Math.round(avgRetention),
       totalUsers,
+      totalRegistrations,
       popularProduct,
       avgWebinarsPerPerson: Math.round(avgWebinarsPerPerson * 10) / 10 // округляем до 1 знака после запятой
     }
@@ -403,6 +434,8 @@ class DatabaseService {
         COALESCE(utm_medium, '') as utm_medium,
         COALESCE(utm_campaign, '') as utm_campaign,
         COALESCE(utm_content, '') as utm_content,
+        COALESCE(utm_term, '') as utm_term,
+        COALESCE(utm_custom, '') as utm_custom,
         COUNT(*) as count
       FROM "Участники-Вебинары"
       WHERE ID_вебинара = ?
@@ -411,7 +444,7 @@ class DatabaseService {
           CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
           CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
         ) >= 1
-      GROUP BY utm_source, utm_medium, utm_campaign, utm_content
+      GROUP BY utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_custom
       ORDER BY count DESC
     `
     return this.execQuery(query, [webinarId])
@@ -687,6 +720,22 @@ class DatabaseService {
     // Не сохраняем сразу
   }
 
+  // Получить список всех уникальных должностей
+  getAllPositions(): string[] {
+    const result = this.db!.exec(`
+      SELECT DISTINCT TRIM(Должность) as position
+      FROM Участники 
+      WHERE Должность IS NOT NULL AND TRIM(Должность) != ''
+      ORDER BY TRIM(Должность) COLLATE NOCASE ASC
+    `)
+    
+    if (result.length > 0 && result[0].values.length > 0) {
+      return result[0].values.map(row => row[0] as string)
+    }
+    
+    return []
+  }
+
   // Получить или создать компанию по ИНН
   getOrCreateCompany(inn: string, companyName?: string) {
     // Ищем компанию по ИНН
@@ -817,6 +866,8 @@ class DatabaseService {
       utmMedium: data.utmMedium || null,
       utmCampaign: data.utmCampaign || null,
       utmContent: data.utmContent || null,
+      utmTerm: data.utmTerm || null,
+      utmCustom: data.utmCustom || null,
       platform: data.platform || null,
       country: data.country || null,
       city: data.city || null,
@@ -837,7 +888,7 @@ class DatabaseService {
       INSERT OR REPLACE INTO "Участники-Вебинары" (
         ID_участника, ID_вебинара, Имя_в_чате, Компания,
         Статус_регистрации, Дата_регистрации, Источники,
-        utm_source, utm_medium, utm_campaign, utm_content,
+        utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_custom,
         Платформа, Страна, Город, Последний_IP,
         Время_входа_первое, Время_выхода_последнее,
         Присутствие_относительно_длительности,
@@ -845,12 +896,13 @@ class DatabaseService {
         Кол_во_сообщений, Процент_от_общего_кол_ва_сообщений,
         Кол_во_вопросов, Процент_от_общего_кол_ва_вопросов,
         Количество_поднятых_рук, Количество_отправленных_эмодзи_реакций
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       participantId, webinarId,
       cleanData.chatName, cleanData.company,
       cleanData.registrationStatus, cleanData.registrationDate, cleanData.sources,
       cleanData.utmSource, cleanData.utmMedium, cleanData.utmCampaign, cleanData.utmContent,
+      cleanData.utmTerm, cleanData.utmCustom,
       cleanData.platform, cleanData.country, cleanData.city, cleanData.lastIP,
       cleanData.firstEntry, cleanData.lastExit,
       cleanData.attendanceDuration, cleanData.attendancePercent,
@@ -1426,6 +1478,144 @@ class DatabaseService {
       }
 
       return 1
+    }
+
+    // Получить топ-20 компаний с более чем 5 уникальными сотрудниками
+    getTopCompaniesWithEmployees() {
+      const query = `
+        SELECT 
+          c.ИНН_компании as inn,
+          c.Название as companyName,
+          COUNT(DISTINCT u.ID_участника) as employeeCount,
+          GROUP_CONCAT(
+            e.Email || '|' || 
+            COALESCE(u.Должность, '—') || '|' || 
+            w.Дата || '|' ||
+            w.Название || '|' ||
+            w.ID_вебинара,
+            ';;;'
+          ) as employeeDetails
+        FROM Компания c
+        INNER JOIN Участники u ON c.ID_компании = u.ID_компании
+        INNER JOIN Email e ON u.ID_участника = e.ID_участника
+        INNER JOIN "Участники-Вебинары" uw ON u.ID_участника = uw.ID_участника
+        INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
+        WHERE (
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+        GROUP BY c.ИНН_компании, c.Название
+        HAVING COUNT(DISTINCT u.ID_участника) > 5
+        ORDER BY employeeCount DESC
+        LIMIT 20
+      `
+      
+      const results = this.execQuery(query, [])
+      
+      return results.map((row: any) => {
+        const details = row.employeeDetails ? row.employeeDetails.split(';;;') : []
+        const employees = details.map((detail: string) => {
+          const [email, position, date, webinarName, webinarId] = detail.split('|')
+          return {
+            email,
+            position,
+            date,
+            webinarName,
+            webinarId: parseInt(webinarId)
+          }
+        })
+        
+        return {
+          inn: row.inn,
+          companyName: row.companyName,
+          employeeCount: row.employeeCount,
+          employees
+        }
+      })
+    }
+
+    // Получить топ вебинаров по посещениям
+    getTopWebinarsByAttendance(limit: number = 20, sortBy: string = 'attended') {
+      let orderByClause = 'attendedCount DESC'
+      
+      if (sortBy === 'registered') {
+        orderByClause = 'registeredCount DESC'
+      } else if (sortBy === 'conversion') {
+        orderByClause = 'conversion DESC'
+      }
+      
+      const query = `
+        SELECT 
+          w.ID_вебинара as id,
+          w.Название as name,
+          w.Дата as date,
+          COUNT(DISTINCT CASE 
+            WHEN uw.Присутствие_относительно_длительности IS NOT NULL 
+            THEN uw.ID_участника 
+          END) as registeredCount,
+          COUNT(DISTINCT CASE 
+            WHEN (
+              CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+              CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+              CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+            ) >= 1
+            THEN uw.ID_участника 
+          END) as attendedCount,
+          ROUND(
+            CAST(COUNT(DISTINCT CASE 
+              WHEN (
+                CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+                CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+                CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+              ) >= 1
+              THEN uw.ID_участника 
+            END) AS REAL) * 100.0 / 
+            NULLIF(COUNT(DISTINCT CASE 
+              WHEN uw.Присутствие_относительно_длительности IS NOT NULL 
+              THEN uw.ID_участника 
+            END), 0),
+            1
+          ) as conversion
+        FROM Вебинары w
+        LEFT JOIN "Участники-Вебинары" uw ON w.ID_вебинара = uw.ID_вебинара
+        GROUP BY w.ID_вебинара, w.Название, w.Дата
+        HAVING attendedCount > 0
+        ORDER BY ${orderByClause}
+        LIMIT ?
+      `
+      
+      return this.execQuery(query, [limit])
+    }
+
+    // Получить топ клиентов по количеству посещений
+    getTopClientsByVisits(limit: number = 20) {
+      const query = `
+        SELECT 
+          e.Email as email,
+          u.Имя as firstName,
+          u.Фамилия as lastName,
+          c.ИНН_компании as inn,
+          c.Название as companyName,
+          u.Должность as position,
+          COUNT(DISTINCT uw.ID_вебинара) as visitsCount
+        FROM Email e
+        INNER JOIN Участники u ON e.ID_участника = u.ID_участника
+        LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
+        INNER JOIN "Участники-Вебинары" uw ON u.ID_участника = uw.ID_участника
+        WHERE (
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
+          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
+        ) >= 1
+        AND e.Email NOT LIKE '%@astralnalog.ru'
+        AND e.Email NOT LIKE '%@astral.ru'
+        GROUP BY e.Email, u.Имя, u.Фамилия, c.ИНН_компании, c.Название, u.Должность
+        ORDER BY visitsCount DESC
+        LIMIT ?
+      `
+      
+      return this.execQuery(query, [limit])
     }
 
 }

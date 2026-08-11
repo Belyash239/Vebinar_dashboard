@@ -5,8 +5,52 @@ const require = createRequire(import.meta.url)
 const XLSX = require('xlsx')
 
 class ParserService {
+  // Утилита: парсинг UTM меток формата Proofix (utm_campaign=main_rd, utm_medium=post)
+  private parseProofixUtm(utmString: string) {
+    const utmParams = {
+      utm_source: null as string | null,
+      utm_medium: null as string | null,
+      utm_campaign: null as string | null,
+      utm_content: null as string | null,
+      utm_term: null as string | null,
+      utm_custom: null as string | null
+    }
+    
+    if (!utmString || typeof utmString !== 'string') return utmParams
+    
+    const pairs = utmString.split(',').map(p => p.trim())
+    
+    for (const pair of pairs) {
+      const [key, value] = pair.split('=').map(p => p.trim())
+      if (key && value) {
+        if (key === 'utm_source') utmParams.utm_source = value
+        else if (key === 'utm_medium') utmParams.utm_medium = value
+        else if (key === 'utm_campaign') utmParams.utm_campaign = value
+        else if (key === 'utm_content') utmParams.utm_content = value
+        else if (key === 'utm_term') utmParams.utm_term = value
+        else if (key === 'utm_custom') utmParams.utm_custom = value
+      }
+    }
+    
+    return utmParams
+  }
+
+  // Утилита: конвертация минут в HH:MM:SS
+  private minutesToHHMMSS(minutes: number): string {
+    if (!minutes || typeof minutes !== 'number') return '00:00:00'
+    
+    const hours = Math.floor(minutes / 60)
+    const mins = Math.floor(minutes % 60)
+    const secs = Math.floor((minutes % 1) * 60)
+    
+    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  }
+
   // Парсинг основного файла (2 листа: участники и сеансы входов)
-  async parseMainFile(filePath: string, webinarId: number | null): Promise<{ webinarName: string | null, webinarDate: string | null }> {
+  async parseMainFile(filePath: string, webinarId: number | null, format: 'mts' | 'proofix' = 'mts'): Promise<{ webinarName: string | null, webinarDate: string | null }> {
+    if (format === 'proofix') {
+      return this.parseProofixMainFile(filePath, webinarId)
+    }
     const workbook = XLSX.readFile(filePath)
     
     // Найти лист "Участники" (первый не "Общая информация")
@@ -179,6 +223,8 @@ class ParserService {
             utmMedium: row['utm_medium'],
             utmCampaign: row['utm_campaign'],
             utmContent: row['utm_content'],
+            utmTerm: row['utm_term'],
+            utmCustom: row['utm_custom'],
             platform: row['Платформа'],
             country: row['Страна'],
             city: row['Город'],
@@ -216,8 +262,148 @@ class ParserService {
     return { webinarName, webinarDate }
   }
 
+  // Парсинг основного файла Proofix (лист с регистрациями)
+  private async parseProofixMainFile(filePath: string, webinarId: number | null): Promise<{ webinarName: string | null, webinarDate: string | null }> {
+    const workbook = XLSX.readFile(filePath)
+    
+    // Найти лист с регистрациями (первый не пустой лист)
+    const regSheetName = workbook.SheetNames[0]
+    const regSheet = workbook.Sheets[regSheetName]
+    const regData = XLSX.utils.sheet_to_json(regSheet)
+
+    console.log(`Парсинг Proofix регистраций: лист "${regSheetName}", строк: ${regData.length}`)
+    
+    if (regData.length > 0) {
+      console.log('Поля Proofix регистраций:', Object.keys(regData[0] as any))
+    }
+
+    // Для Proofix название и дату вебинара нужно получить из другого источника
+    // Возвращаем null, так как эти данные не в файле регистраций
+    let webinarName: string | null = null
+    let webinarDate: string | null = null
+    
+    if (webinarId === null) {
+      return { webinarName, webinarDate }
+    }
+
+    let processedCount = 0
+    let skippedInnCount = 0
+    let skippedNoEmailCount = 0
+
+    for (const row of regData as any[]) {
+      try {
+        if (!row['Email']) {
+          skippedNoEmailCount++
+          continue
+        }
+
+        // Валидация ИНН
+        const innValue = row['ИНН']
+        let innStr = ''
+        
+        if (innValue && String(innValue).trim() !== '') {
+          innStr = String(innValue).trim()
+          
+          if (!/^\d{10}$|^\d{12}$/.test(innStr)) {
+            skippedInnCount++
+            innStr = ''
+          }
+        } else {
+          skippedInnCount++
+          innStr = ''
+        }
+
+        // Обработка телефона
+        let phoneNumber = row['Телефон']
+        if (phoneNumber) {
+          if (typeof phoneNumber === 'number') {
+            phoneNumber = String(phoneNumber)
+          } else {
+            phoneNumber = String(phoneNumber).trim()
+          }
+          
+          phoneNumber = phoneNumber.replace(/[\s\-\(\)]/g, '')
+          
+          if (phoneNumber.startsWith('8') && phoneNumber.length === 11) {
+            phoneNumber = '+7' + phoneNumber.slice(1)
+          }
+          
+          if (phoneNumber.startsWith('7') && phoneNumber.length === 11 && !phoneNumber.startsWith('+')) {
+            phoneNumber = '+' + phoneNumber
+          }
+          
+          if (phoneNumber.startsWith('+7') && phoneNumber.length === 12) {
+            phoneNumber = `${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)}-${phoneNumber.slice(8, 10)}-${phoneNumber.slice(10, 12)}`
+          }
+        }
+
+        // Парсим UTM метки
+        const utmParams = this.parseProofixUtm(row['Utm метки'] || '')
+
+        // Создать участника
+        const participantId = databaseService.getOrCreateParticipantByEmail(
+          row['Email'],
+          row['Имя'] || '',
+          row['Фамилия'] || '',
+          innStr,
+          phoneNumber || null,
+          null, // Название компании не в регистрациях
+          undefined
+        )
+
+        // Добавить связь участник-вебинар
+        databaseService.addParticipantWebinar(participantId, webinarId, {
+          chatName: null,
+          company: null,
+          registrationStatus: 'Зарегистрирован',
+          registrationDate: row['Дата создания'] || null,
+          sources: row['Источник'] || null,
+          utmSource: utmParams.utm_source,
+          utmMedium: utmParams.utm_medium,
+          utmCampaign: utmParams.utm_campaign,
+          utmContent: utmParams.utm_content,
+          utmTerm: utmParams.utm_term,
+          utmCustom: utmParams.utm_custom,
+          platform: null,
+          country: null,
+          city: null,
+          lastIP: null,
+          firstEntry: null,
+          lastExit: null,
+          attendanceDuration: null,
+          attendancePercent: null,
+          messagesCount: 0,
+          messagesPercent: null,
+          questionsCount: 0,
+          questionsPercent: null,
+          handsRaised: 0,
+          emojiReactions: 0
+        })
+        
+        processedCount++
+      } catch (error) {
+        console.error('Ошибка при обработке строки регистрации Proofix:', error)
+      }
+    }
+    
+    console.log(`✅ Импортировано регистраций Proofix: ${processedCount}`)
+    if (skippedNoEmailCount > 0) {
+      console.log(`⚠️ Пропущено записей без Email: ${skippedNoEmailCount}`)
+    }
+    if (skippedInnCount > 0) {
+      console.log(`⚠️ Пропущено записей с некорректным/отсутствующим ИНН: ${skippedInnCount}`)
+    }
+    
+    return { webinarName, webinarDate }
+  }
+
   // Парсинг файла с вопросами
-  async parseQuestionsFile(filePath: string, webinarId: number) {
+  async parseQuestionsFile(filePath: string, webinarId: number, format: 'mts' | 'proofix' = 'mts') {
+    if (format === 'proofix') {
+      // Proofix не имеет отдельного листа с вопросами
+      console.log('⚠️ Proofix не поддерживает отдельный файл вопросов')
+      return
+    }
     const workbook = XLSX.readFile(filePath)
     
     // Найти лист "Вопросы", пропустить "Общая информация"
@@ -280,7 +466,11 @@ class ParserService {
   }
 
   // Парсинг файла с чатом
-  async parseChatFile(filePath: string, webinarId: number) {
+  async parseChatFile(filePath: string, webinarId: number, format: 'mts' | 'proofix' = 'mts') {
+    if (format === 'proofix') {
+      return this.parseProofixChatFile(filePath, webinarId)
+    }
+    
     const workbook = XLSX.readFile(filePath)
     
     // Найти лист "Сообщения чата", пропустить "Общая информация"
@@ -333,7 +523,11 @@ class ParserService {
   }
 
   // Парсинг файла с опросами
-  async parseSurveyFile(filePath: string, webinarId: number | null, importPositions: boolean = false) {
+  async parseSurveyFile(filePath: string, webinarId: number | null, importPositions: boolean = false, format: 'mts' | 'proofix' = 'mts') {
+    if (format === 'proofix') {
+      return this.parseProofixSurveyFile(filePath, webinarId, importPositions)
+    }
+    
     const workbook = XLSX.readFile(filePath)
     
     // Ищем лист "Ответы"
@@ -451,6 +645,254 @@ class ParserService {
     console.log(`✅ Импортировано ответов на опросы: ${totalAnswers}`)
     if (importPositions) {
       console.log(`✅ Обновлено должностей: ${positionsUpdated}`)
+    }
+    if (notFoundCount > 0) {
+      console.log(`⚠️ Не найдено email для ${notFoundCount} участников`)
+      console.log('Примеры не найденных email:', Array.from(notFoundEmails).slice(0, 5))
+    }
+  }
+
+  // Парсинг файла с присутствием Proofix (обновляет данные из регистраций)
+  async parseProofixAttendanceFile(filePath: string, webinarId: number) {
+    const workbook = XLSX.readFile(filePath)
+    const attendanceSheetName = workbook.SheetNames[0]
+    const sheet = workbook.Sheets[attendanceSheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+
+    console.log(`Парсинг присутствия Proofix: лист "${attendanceSheetName}", строк: ${data.length}`)
+
+    if (data.length > 0) {
+      console.log('Поля присутствия Proofix:', Object.keys(data[0] as any))
+    }
+
+    let processedCount = 0
+    let notFoundCount = 0
+
+    for (const row of data as any[]) {
+      try {
+        const email = row['Email'] || row['email']
+        
+        if (!email) {
+          continue
+        }
+
+        const db = databaseService.getDatabase()
+        const emailResult = db!.exec('SELECT ID_email FROM Email WHERE Email = ?', [email])
+
+        if (emailResult.length > 0 && emailResult[0].values.length > 0) {
+          const emailId = emailResult[0].values[0][0] as number
+          
+          // Конвертируем минуты в HH:MM:SS
+          const attendanceMinutes = row['Продолжительность присутствия участника,   минут'] || 
+                                    row['Продолжительность присутствия участника, минут'] ||
+                                    row['Продолжительность присутствия участника'] ||
+                                    0
+          
+          const attendanceDuration = this.minutesToHHMMSS(attendanceMinutes)
+          
+          // Вычисляем процент (если есть общая длительность вебинара)
+          let attendancePercent = null
+          
+          // Парсим UTM метки
+          const utmParams = this.parseProofixUtm(row['Utm метки'] || '')
+          
+          // Обновляем запись участник-вебинар
+          db!.run(`
+            UPDATE "Участники-Вебинары"
+            SET 
+              Присутствие_относительно_длительности = ?,
+              Присутствие_от_общей_длительности = ?,
+              utm_source = ?,
+              utm_medium = ?,
+              utm_campaign = ?,
+              utm_content = ?,
+              utm_term = ?,
+              utm_custom = ?
+            WHERE ID_email = ? AND ID_вебинара = ?
+          `, [
+            attendanceDuration,
+            attendancePercent,
+            utmParams.utm_source,
+            utmParams.utm_medium,
+            utmParams.utm_campaign,
+            utmParams.utm_content,
+            utmParams.utm_term,
+            utmParams.utm_custom,
+            emailId,
+            webinarId
+          ])
+          
+          processedCount++
+        } else {
+          notFoundCount++
+        }
+      } catch (error) {
+        console.error('Ошибка при обработке присутствия Proofix:', error)
+      }
+    }
+    
+    console.log(`✅ Обновлено записей присутствия Proofix: ${processedCount} из ${data.length}`)
+    if (notFoundCount > 0) {
+      console.log(`⚠️ Не найдено email для ${notFoundCount} записей присутствия`)
+    }
+  }
+
+  // Парсинг файла с чатом Proofix
+  private async parseProofixChatFile(filePath: string, webinarId: number) {
+    const workbook = XLSX.readFile(filePath)
+    const chatSheetName = workbook.SheetNames[0]
+    const sheet = workbook.Sheets[chatSheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+
+    console.log(`Парсинг чата Proofix: лист "${chatSheetName}", строк: ${data.length}`)
+
+    if (data.length > 0) {
+      console.log('Поля чата Proofix:', Object.keys(data[0] as any))
+    }
+
+    let processedCount = 0
+    for (const row of data as any[]) {
+      try {
+        const email = row['email участника мероприятия'] || row['Email участника'] || row['email']
+        
+        if (email && email !== 'Нет регистрации') {
+          const db = databaseService.getDatabase()
+          const result = db!.exec('SELECT ID_email FROM Email WHERE Email = ?', [email])
+
+          if (result.length > 0 && result[0].values.length > 0) {
+            const emailId = result[0].values[0][0] as number
+            
+            // Добавляем сообщение с дополнительными полями Proofix
+            const messageId = row['ID_сообщения'] || null
+            const parentMessageId = row['ID-сообщения родителя'] || row['ID_сообщения_родителя'] || null
+            const message = row['Сообщение'] || ''
+            const timestamp = row['Дата создания'] || null
+            const chatName = row['Имя участника в чате'] || null
+            const likes = row['Кол-во лайков сообщения'] || 0
+            const dislikes = row['Кол-во диз лайков сообщения'] || row['Кол-во дизлайков сообщения'] || 0
+            const ipAddress = row['IP-адрес c которого отправлено сообщение'] || row['IP-адрес'] || null
+            
+            databaseService.addChatMessage(webinarId, emailId, timestamp, message)
+            processedCount++
+          }
+        }
+      } catch (error) {
+        console.error('Ошибка при обработке сообщения чата Proofix:', error)
+      }
+    }
+    
+    console.log(`✅ Импортировано сообщений чата Proofix: ${processedCount} из ${data.length}`)
+  }
+
+  // Парсинг файла с опросами Proofix
+  private async parseProofixSurveyFile(filePath: string, webinarId: number | null, importPositions: boolean = false) {
+    const workbook = XLSX.readFile(filePath)
+    const surveySheetName = workbook.SheetNames[0]
+    const sheet = workbook.Sheets[surveySheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+
+    console.log(`Парсинг опросов Proofix: лист "${surveySheetName}", строк: ${data.length}`)
+    console.log(`Привязка к вебинару: ${webinarId ? `ID ${webinarId}` : 'Не привязано'}`)
+
+    if (data.length > 0) {
+      console.log('Поля опросов Proofix:', Object.keys(data[0] as any))
+    }
+
+    let processedCount = 0
+    let notFoundCount = 0
+    let totalAnswers = 0
+    let positionsUpdated = 0
+    const notFoundEmails = new Set<string>()
+    
+    const surveyId = databaseService.getNextSurveyId()
+    
+    for (const row of data as any[]) {
+      try {
+        const email = row['Email'] || row['email'] || row['E-mail']
+        
+        if (!email) {
+          continue
+        }
+        
+        const db = databaseService.getDatabase()
+        const emailResult = db!.exec('SELECT e.ID_email, e.ID_участника FROM Email e WHERE e.Email = ?', [email])
+
+        if (emailResult.length > 0 && emailResult[0].values.length > 0) {
+          const emailId = emailResult[0].values[0][0] as number
+          const participantId = emailResult[0].values[0][1] as number
+          
+          let positionFound = false
+          
+          const allFields = Object.keys(row)
+          for (const field of allFields) {
+            // Пропускаем служебные поля
+            if (field === 'Имя' || field === 'имя' || 
+                field === 'Фамилия' || field === 'фамилия' ||
+                field === 'Email' || field === 'email' || field === 'E-mail' ||
+                field === 'Телефон' || field === 'телефон' ||
+                field === 'ИНН' || field === 'инн' ||
+                field === 'Дата создания' || field === 'дата создания' ||
+                field === 'Последний вход' || field === 'последний вход') {
+              continue
+            }
+            
+            // Пропускаем поля "Дата ответа" (они идут парой с вопросами)
+            if (field.toLowerCase().includes('дата ответа')) {
+              continue
+            }
+            
+            const question = field.trim()
+            const answer = row[field]
+            
+            if (!answer || String(answer).trim() === '') {
+              continue
+            }
+            
+            const answerStr = String(answer).trim()
+            
+            // Проверяем должность
+            if (importPositions && !positionFound) {
+              const questionLower = question.toLowerCase()
+              const answerLower = answerStr.toLowerCase()
+              
+              const isPositionField = 
+                questionLower.includes('должность') ||
+                questionLower.includes('роль') ||
+                questionLower.includes('кем работаете') ||
+                questionLower.includes('кто вы') ||
+                questionLower.includes('ваша позиция') ||
+                answerLower.includes('бухгалтер') ||
+                answerLower.includes('директор') ||
+                answerLower.includes('менеджер') ||
+                answerLower.includes('специалист') ||
+                answerLower.includes('руководитель')
+              
+              if (isPositionField) {
+                databaseService.updateParticipantPosition(participantId, answerStr)
+                positionFound = true
+                positionsUpdated++
+                console.log(`Обновлена должность для ${email}: ${answerStr}`)
+              }
+            }
+            
+            databaseService.addSurveyQuestion(surveyId, question, webinarId, emailId, answerStr)
+            totalAnswers++
+          }
+          
+          processedCount++
+        } else {
+          notFoundCount++
+          notFoundEmails.add(email)
+        }
+      } catch (error) {
+        console.error('Ошибка при обработке опроса Proofix:', error)
+      }
+    }
+    
+    console.log(`✅ Обработано участников Proofix: ${processedCount} из ${data.length}`)
+    console.log(`✅ Импортировано ответов на опросы Proofix: ${totalAnswers}`)
+    if (importPositions) {
+      console.log(`✅ Обновлено должностей Proofix: ${positionsUpdated}`)
     }
     if (notFoundCount > 0) {
       console.log(`⚠️ Не найдено email для ${notFoundCount} участников`)
@@ -813,6 +1255,8 @@ class ParserService {
             utmMedium: mappedData['utm_medium'] || null,
             utmCampaign: mappedData['utm_campaign'] || null,
             utmContent: mappedData['utm_content'] || null,
+            utmTerm: mappedData['utm_term'] || null,
+            utmCustom: mappedData['utm_custom'] || null,
             platform: mappedData['Платформа'] || null,
             country: mappedData['Страна'] || null,
             city: mappedData['Город'] || null,

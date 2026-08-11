@@ -12,21 +12,29 @@ interface Tag {
   checked: boolean
 }
 
+const fileFormat = ref<'mts' | 'proofix'>('mts')
 const mainFile = ref<File | null>(null)
 const questionsFile = ref<File | null>(null)
 const chatFile = ref<File | null>(null)
 const surveyFile = ref<File | null>(null)
+const attendanceFile = ref<File | null>(null)
 const importPositions = ref(false)
+
+// Proofix-specific fields
+const webinarName = ref('')
+const webinarDate = ref('')
 
 const mainFileInput = ref<HTMLInputElement | null>(null)
 const questionsFileInput = ref<HTMLInputElement | null>(null)
 const chatFileInput = ref<HTMLInputElement | null>(null)
 const surveyFileInput = ref<HTMLInputElement | null>(null)
+const attendanceFileInput = ref<HTMLInputElement | null>(null)
 
 const isDraggingMain = ref(false)
 const isDraggingQuestions = ref(false)
 const isDraggingChat = ref(false)
 const isDraggingSurvey = ref(false)
+const isDraggingAttendance = ref(false)
 
 const tags = ref<Tag[]>([])
 const isLoadingTags = ref(false)
@@ -69,7 +77,7 @@ onMounted(() => {
   loadTags()
 })
 
-const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   
@@ -78,32 +86,36 @@ const handleFileSelect = (event: Event, fileType: 'main' | 'questions' | 'chat' 
     else if (fileType === 'questions') questionsFile.value = file
     else if (fileType === 'chat') chatFile.value = file
     else if (fileType === 'survey') surveyFile.value = file
+    else if (fileType === 'attendance') attendanceFile.value = file
   }
 }
 
-const handleDragOver = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const handleDragOver = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   event.preventDefault()
   if (fileType === 'main') isDraggingMain.value = true
   else if (fileType === 'questions') isDraggingQuestions.value = true
   else if (fileType === 'chat') isDraggingChat.value = true
   else if (fileType === 'survey') isDraggingSurvey.value = true
+  else if (fileType === 'attendance') isDraggingAttendance.value = true
 }
 
-const handleDragLeave = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const handleDragLeave = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   event.preventDefault()
   if (fileType === 'main') isDraggingMain.value = false
   else if (fileType === 'questions') isDraggingQuestions.value = false
   else if (fileType === 'chat') isDraggingChat.value = false
   else if (fileType === 'survey') isDraggingSurvey.value = false
+  else if (fileType === 'attendance') isDraggingAttendance.value = false
 }
 
-const handleDrop = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const handleDrop = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   event.preventDefault()
   
   if (fileType === 'main') isDraggingMain.value = false
   else if (fileType === 'questions') isDraggingQuestions.value = false
   else if (fileType === 'chat') isDraggingChat.value = false
   else if (fileType === 'survey') isDraggingSurvey.value = false
+  else if (fileType === 'attendance') isDraggingAttendance.value = false
   
   const files = event.dataTransfer?.files
   if (files && files.length > 0) {
@@ -115,20 +127,22 @@ const handleDrop = (event: DragEvent, fileType: 'main' | 'questions' | 'chat' | 
       else if (fileType === 'questions') questionsFile.value = file
       else if (fileType === 'chat') chatFile.value = file
       else if (fileType === 'survey') surveyFile.value = file
+      else if (fileType === 'attendance') attendanceFile.value = file
     } else {
       alert('Пожалуйста, загрузите файл формата .xlsx или .xls')
     }
   }
 }
 
-const triggerFileInput = (fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const triggerFileInput = (fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   if (fileType === 'main') mainFileInput.value?.click()
   else if (fileType === 'questions') questionsFileInput.value?.click()
   else if (fileType === 'chat') chatFileInput.value?.click()
   else if (fileType === 'survey') surveyFileInput.value?.click()
+  else if (fileType === 'attendance') attendanceFileInput.value?.click()
 }
 
-const removeFile = (fileType: 'main' | 'questions' | 'chat' | 'survey') => {
+const removeFile = (fileType: 'main' | 'questions' | 'chat' | 'survey' | 'attendance') => {
   if (fileType === 'main') mainFile.value = null
   else if (fileType === 'questions') questionsFile.value = null
   else if (fileType === 'chat') chatFile.value = null
@@ -136,6 +150,7 @@ const removeFile = (fileType: 'main' | 'questions' | 'chat' | 'survey') => {
     surveyFile.value = null
     importPositions.value = false
   }
+  else if (fileType === 'attendance') attendanceFile.value = null
 }
 
 const handleSubmit = async () => {
@@ -144,12 +159,31 @@ const handleSubmit = async () => {
     return
   }
 
+  // Для Proofix проверяем обязательные поля
+  if (fileFormat.value === 'proofix') {
+    if (!webinarName.value.trim()) {
+      uploadError.value = 'Для Proofix необходимо указать название вебинара'
+      return
+    }
+    if (!webinarDate.value) {
+      uploadError.value = 'Для Proofix необходимо указать дату вебинара'
+      return
+    }
+  }
+
   isUploading.value = true
   uploadError.value = ''
 
   try {
     const formData = new FormData()
+    formData.append('fileFormat', fileFormat.value)
     formData.append('mainFile', mainFile.value)
+    
+    // Для Proofix добавляем название и дату вебинара
+    if (fileFormat.value === 'proofix') {
+      formData.append('webinarName', webinarName.value.trim())
+      formData.append('webinarDate', webinarDate.value)
+    }
     
     if (questionsFile.value) {
       formData.append('questionsFile', questionsFile.value)
@@ -162,6 +196,10 @@ const handleSubmit = async () => {
     if (surveyFile.value) {
       formData.append('surveyFile', surveyFile.value)
       formData.append('importPositions', importPositions.value.toString())
+    }
+
+    if (attendanceFile.value) {
+      formData.append('attendanceFile', attendanceFile.value)
     }
 
     const selectedTags = tags.value.filter(t => t.checked).map(t => t.name)
@@ -206,10 +244,87 @@ const handleSubmit = async () => {
         </div>
 
         <form @submit.prevent="handleSubmit" class="space-y-6">
+          <!-- Выбор формата -->
+          <div>
+            <label class="block text-lg font-medium text-gray-900 mb-3">
+              Формат файлов
+            </label>
+            <div class="flex gap-4">
+              <label class="flex-1 cursor-pointer">
+                <input
+                  v-model="fileFormat"
+                  type="radio"
+                  value="mts"
+                  class="sr-only"
+                />
+                <div
+                  :class="[
+                    'border-2 rounded-lg p-4 text-center transition',
+                    fileFormat === 'mts'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-300 bg-white hover:border-gray-400'
+                  ]"
+                >
+                  <div class="font-medium text-gray-900">МТС-линк</div>
+                  <div class="text-sm text-gray-500 mt-1">Текущий формат</div>
+                </div>
+              </label>
+              <label class="flex-1 cursor-pointer">
+                <input
+                  v-model="fileFormat"
+                  type="radio"
+                  value="proofix"
+                  class="sr-only"
+                />
+                <div
+                  :class="[
+                    'border-2 rounded-lg p-4 text-center transition',
+                    fileFormat === 'proofix'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-300 bg-white hover:border-gray-400'
+                  ]"
+                >
+                  <div class="font-medium text-gray-900">Proofix</div>
+                  <div class="text-sm text-gray-500 mt-1">Новый формат</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Proofix: Название и дата вебинара -->
+          <div v-if="fileFormat === 'proofix'" class="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-900 mb-2">
+                Название вебинара <span class="text-red-500">*</span>
+              </label>
+              <input
+                v-model="webinarName"
+                type="text"
+                placeholder="Введите название вебинара"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-900 mb-2">
+                Дата вебинара <span class="text-red-500">*</span>
+              </label>
+              <input
+                v-model="webinarDate"
+                type="date"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+            <p class="text-xs text-gray-600">
+              Для формата Proofix необходимо указать название и дату вебинара вручную
+            </p>
+          </div>
+
           <!-- Основной лист -->
           <div>
             <label class="block text-lg font-medium text-gray-900 mb-3">
-              Основной лист
+              {{ fileFormat === 'proofix' ? 'Регистрации' : 'Основной лист' }}
             </label>
             <div
               @dragover="handleDragOver($event, 'main')"
@@ -269,8 +384,71 @@ const handleSubmit = async () => {
             </div>
           </div>
 
-          <!-- Вопросы -->
-          <div>
+          <!-- Proofix: Присутствие -->
+          <div v-if="fileFormat === 'proofix'">
+            <label class="block text-lg font-medium text-gray-900 mb-3">
+              Присутствие
+            </label>
+            <div
+              @dragover="handleDragOver($event, 'attendance')"
+              @dragleave="handleDragLeave($event, 'attendance')"
+              @drop="handleDrop($event, 'attendance')"
+              @click="triggerFileInput('attendance')"
+              :class="[
+                'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition',
+                isDraggingAttendance
+                  ? 'border-blue-500 bg-blue-50'
+                  : attendanceFile
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
+              ]"
+            >
+              <input
+                ref="attendanceFileInput"
+                type="file"
+                accept=".xlsx,.xls"
+                @change="handleFileSelect($event, 'attendance')"
+                class="hidden"
+              />
+              
+              <div v-if="!attendanceFile" class="flex flex-col items-center gap-3">
+                <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <div>
+                  <p class="text-base font-medium text-gray-700">
+                    Перетащите файл сюда или <span class="text-blue-600">выберите файл</span>
+                  </p>
+                  <p class="text-sm text-gray-500 mt-1">
+                    .xlsx или .xls
+                  </p>
+                </div>
+              </div>
+              
+              <div v-else class="flex flex-col items-center gap-3">
+                <svg class="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p class="text-base font-medium text-gray-700">
+                    {{ attendanceFile.name }}
+                  </p>
+                  <p class="text-sm text-gray-500 mt-1">
+                    {{ (attendanceFile.size / 1024).toFixed(2) }} КБ
+                  </p>
+                  <button
+                    @click.stop="removeFile('attendance')"
+                    class="mt-2 text-sm text-red-600 hover:text-red-800 font-medium"
+                  >
+                    Удалить файл
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Вопросы (только для МТС-линк) -->
+          <div v-if="fileFormat === 'mts'">
             <label class="block text-lg font-medium text-gray-900 mb-3">
               Вопросы
             </label>

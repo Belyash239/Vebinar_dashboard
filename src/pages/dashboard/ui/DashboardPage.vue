@@ -22,10 +22,219 @@ const surveyListRef = ref<InstanceType<typeof SurveyList> | null>(null)
 const selectedTags = ref<number[]>([])
 const tags = ref<Tag[]>([])
 const isExporting = ref(false)
-const exportType = ref<'tags' | 'inn'>('tags')
+const exportType = ref<'tags' | 'inn' | 'positions'>('tags')
 const innFile = ref<File | null>(null)
 const innFileInput = ref<HTMLInputElement | null>(null)
 const isDragging = ref(false)
+
+// Структурированный список должностей с группировкой
+interface PositionGroup {
+  name: string
+  expanded: boolean
+  positions: string[]
+}
+
+const positionGroups = ref<PositionGroup[]>([
+  {
+    name: 'Бухгалтеры',
+    expanded: false,
+    positions: [
+      'Главный бухгалтер',
+      'Штатный бухгалтер',
+      'Бухгалтер на аутсорсе (частная практика)',
+      'Заместитель главного бухгалтера',
+      'Ведущий бухгалтер',
+      'Старший бухгалтер',
+      'Бухгалтер-материалист',
+      'Руководитель / владелец бухгалтерской фирмы'
+    ]
+  },
+  {
+    name: 'Директора и руководители высшего звена',
+    expanded: false,
+    positions: [
+      'Генеральный директор/ Директор',
+      'Исполнительный директор',
+      'Коммерческий директор',
+      'Финансовый директор',
+      'Директор по логистике',
+      'ИТ-директор',
+      'Директор по развитию',
+      'Директор по снабжению',
+      'Директор по закупкам',
+      'Директор по транспорту',
+      'Операционный директор',
+      'Заместитель генерального директора/директора'
+    ]
+  },
+  {
+    name: 'Руководители отделов и департаментов',
+    expanded: false,
+    positions: [
+      'Руководитель отдела / Начальник отдела',
+      'Руководитель департамента',
+      'Руководитель группы',
+      'Руководитель ИТ / Начальник отдела ИТ / Начальник департамента ИТ и связи',
+      'Руководитель отдела логистики / Начальник отдела логистики',
+      'Руководитель отдела транспортной логистики',
+      'Руководитель отдела продаж',
+      'Руководитель отдела закупок',
+      'Руководитель отдела снабжения',
+      'Руководитель отдела сопровождения',
+      'Руководитель юридического отдела'
+    ]
+  },
+  {
+    name: 'ИТ-специалисты',
+    expanded: false,
+    positions: [
+      'Инженер-программист',
+      'Программист 1С',
+      'Системный администратор',
+      'Системный аналитик',
+      'Бизнес-аналитик',
+      'Аналитик 1С',
+      'Инженер по сопровождению ПП 1С',
+      'Сервис-инженер / Старший сервис-инженер / Ведущий сервис-инженер',
+      'Технический специалист',
+      'Специалист по внедрению ПО / Специалист по внедрению ИС',
+      'Специалист по информационным системам',
+      'Функциональный архитектор / Функциональный архитектор 1С'
+    ]
+  },
+  {
+    name: 'Консультанты',
+    expanded: false,
+    positions: [
+      'Консультант / Специалист-консультант',
+      'Консультант 1С',
+      'Ведущий консультант / Ведущий консультант 1С',
+      'Старший консультант / Старший консультант 1С',
+      'Консультант-аналитик',
+      'Консультант по внедрению и поддержке'
+    ]
+  },
+  {
+    name: 'Логисты',
+    expanded: false,
+    positions: [
+      'Логист / Ведущий логист',
+      'Менеджер по логистике',
+      'Специалист по логистике / Старший специалист по логистике',
+      'Аналитик транспортной логистики',
+      'Специалист по транспортной логистике',
+      'Диспетчер',
+      'Экспедитор'
+    ]
+  },
+  {
+    name: 'Менеджеры',
+    expanded: false,
+    positions: [
+      'Менеджер по работе с клиентами / Клиент-менеджер',
+      'Менеджер по сопровождению',
+      'Менеджер по продажам',
+      'Менеджер по развитию',
+      'Менеджер проектов / Проектный менеджер / Руководитель проектов',
+      'Менеджер по закупкам',
+      'Менеджер по транспорту',
+      'Старший менеджер',
+      'Ведущий менеджер'
+    ]
+  },
+  {
+    name: 'Юристы',
+    expanded: false,
+    positions: [
+      'Юрист',
+      'Юрисконсульт',
+      'Главный юрисконсульт',
+      'Ведущий юрисконсульт',
+      'Старший юрист',
+      'Налоговый юрист',
+      'Юрист по IT',
+      'Руководитель юридического департамента'
+    ]
+  },
+  {
+    name: 'Специалисты',
+    expanded: false,
+    positions: [
+      'Специалист / Ведущий специалист / Главный специалист / Старший специалист',
+      'Специалист 1С / 1С специалист',
+      'Специалист по сопровождению / Специалист по сопровождению сервисов',
+      'Специалист технической поддержки',
+      'Специалист отдела логистики',
+      'Специалист ВЭД'
+    ]
+  },
+  {
+    name: 'Предприниматели и владельцы',
+    expanded: false,
+    positions: [
+      'Индивидуальный предприниматель / ИП',
+      'Руководитель / собственник бизнеса',
+      'Собственник/владелец бизнеса',
+      'Предприниматель',
+      'Учредитель'
+    ]
+  },
+  {
+    name: 'Прочие должности',
+    expanded: false,
+    positions: [
+      'Методист',
+      'Экономист',
+      'Аудитор',
+      'Офис-менеджер',
+      'Помощник директора',
+      'Кладовщик',
+      'Водитель',
+      'Мастер производства',
+      'Механик',
+      'Инженер',
+      'Товаровед',
+      'Администратор',
+      'Делопроизводитель',
+      'Копирайтер',
+      'Маркетолог',
+      'Оператор',
+      'Самозанятый'
+    ]
+  }
+])
+
+const selectedPositions = ref<string[]>([])
+
+// Функция для переключения группы
+const toggleGroup = (group: PositionGroup) => {
+  group.expanded = !group.expanded
+}
+
+// Функция для проверки, выбраны ли все должности в группе
+const isGroupFullySelected = (group: PositionGroup) => {
+  return group.positions.every(pos => selectedPositions.value.includes(pos))
+}
+
+// Функция для проверки, выбрана ли хотя бы одна должность в группе
+const isGroupPartiallySelected = (group: PositionGroup) => {
+  return group.positions.some(pos => selectedPositions.value.includes(pos)) && !isGroupFullySelected(group)
+}
+
+// Функция для выбора/снятия всех должностей в группе
+const toggleGroupSelection = (group: PositionGroup) => {
+  if (isGroupFullySelected(group)) {
+    // Снимаем все должности этой группы
+    selectedPositions.value = selectedPositions.value.filter(pos => !group.positions.includes(pos))
+  } else {
+    // Добавляем все должности этой группы
+    group.positions.forEach(pos => {
+      if (!selectedPositions.value.includes(pos)) {
+        selectedPositions.value.push(pos)
+      }
+    })
+  }
+}
 
 const openImportModal = () => {
   showImportModal.value = true
@@ -98,6 +307,7 @@ const openExportModal = () => {
 const closeExportModal = () => {
   showExportModal.value = false
   selectedTags.value = []
+  selectedPositions.value = []
   exportType.value = 'tags'
   innFile.value = null
   if (innFileInput.value) {
@@ -171,6 +381,26 @@ const toggleAllTags = () => {
   }
 }
 
+const togglePosition = (position: string) => {
+  const index = selectedPositions.value.indexOf(position)
+  if (index > -1) {
+    selectedPositions.value.splice(index, 1)
+  } else {
+    selectedPositions.value.push(position)
+  }
+}
+
+const toggleAllPositions = () => {
+  // Собираем все должности из всех групп
+  const allPositions = positionGroups.value.flatMap(group => group.positions)
+  
+  if (selectedPositions.value.length === allPositions.length) {
+    selectedPositions.value = []
+  } else {
+    selectedPositions.value = [...allPositions]
+  }
+}
+
 const handleExport = async () => {
   if (exportType.value === 'tags') {
     if (selectedTags.value.length === 0) {
@@ -193,6 +423,39 @@ const handleExport = async () => {
       const a = document.createElement('a')
       a.href = url
       a.download = 'tags_export.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      closeExportModal()
+    } catch (error) {
+      console.error('Error exporting:', error)
+      alert('Ошибка при экспорте данных')
+    } finally {
+      isExporting.value = false
+    }
+  } else if (exportType.value === 'positions') {
+    if (selectedPositions.value.length === 0) {
+      alert('Выберите хотя бы одну должность')
+      return
+    }
+
+    isExporting.value = true
+
+    try {
+      const response = await fetch('http://localhost:3000/api/export/positions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ positions: selectedPositions.value })
+      })
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'positions_export.xlsx'
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
@@ -372,7 +635,18 @@ const handleExport = async () => {
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 ]"
               >
-                По тегам (чаты и вопросы)
+                По тегам
+              </button>
+              <button
+                @click="exportType = 'positions'"
+                :class="[
+                  'px-4 py-2 rounded-lg font-medium transition',
+                  exportType === 'positions'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+              >
+                По должностям
               </button>
               <button
                 @click="exportType = 'inn'"
@@ -421,6 +695,94 @@ const handleExport = async () => {
               <div v-if="selectedTags.length > 0" class="mt-2 text-sm text-gray-600">
                 Выбрано тегов: {{ selectedTags.length }}
               </div>
+            </div>
+
+            <!-- Экспорт по должностям -->
+            <div v-if="exportType === 'positions'">
+              <div class="flex items-center justify-between mb-3">
+                <label class="block text-lg font-medium text-gray-900">
+                  Выберите должности для экспорта
+                </label>
+                <button
+                  @click="toggleAllPositions"
+                  class="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  {{ selectedPositions.length === positionGroups.flatMap(g => g.positions).length ? 'Снять всё' : 'Выбрать всё' }}
+                </button>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto space-y-2">
+                <!-- Группы должностей -->
+                <div
+                  v-for="group in positionGroups"
+                  :key="group.name"
+                  class="border border-gray-200 rounded-lg bg-white overflow-hidden"
+                >
+                  <!-- Заголовок группы -->
+                  <div
+                    @click="toggleGroup(group)"
+                    class="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 transition"
+                  >
+                    <div class="flex items-center gap-3">
+                      <!-- Чекбокс группы -->
+                      <input
+                        type="checkbox"
+                        :checked="isGroupFullySelected(group)"
+                        :indeterminate="isGroupPartiallySelected(group)"
+                        @click.stop="toggleGroupSelection(group)"
+                        class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                      />
+                      <!-- Иконка раскрытия -->
+                      <svg
+                        class="w-5 h-5 text-gray-500 transition-transform"
+                        :class="{ 'rotate-90': group.expanded }"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                      <!-- Название группы -->
+                      <span class="text-sm font-semibold text-gray-900">{{ group.name }}</span>
+                      <span class="text-xs text-gray-500">({{ group.positions.length }})</span>
+                    </div>
+                    <!-- Счетчик выбранных -->
+                    <span
+                      v-if="group.positions.some(pos => selectedPositions.includes(pos))"
+                      class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full font-medium"
+                    >
+                      {{ group.positions.filter(pos => selectedPositions.includes(pos)).length }}
+                    </span>
+                  </div>
+                  
+                  <!-- Список должностей в группе -->
+                  <div v-if="group.expanded" class="border-t border-gray-200 bg-gray-50">
+                    <div class="p-2 space-y-1">
+                      <label
+                        v-for="position in group.positions"
+                        :key="position"
+                        class="flex items-center gap-3 p-2 pl-10 hover:bg-white rounded cursor-pointer transition"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="selectedPositions.includes(position)"
+                          @change="togglePosition(position)"
+                          class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span class="text-sm text-gray-700">{{ position }}</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-if="selectedPositions.length > 0" class="mt-3 flex items-center gap-2">
+                <span class="text-sm font-medium text-gray-700">Выбрано должностей:</span>
+                <span class="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded-full font-semibold">
+                  {{ selectedPositions.length }}
+                </span>
+              </div>
+              <p class="mt-3 text-xs text-gray-600">
+                Экспорт включает: участников, вебинары, чаты, вопросы и ответы на опросы
+              </p>
             </div>
 
             <!-- Экспорт по ИНН -->
@@ -498,7 +860,7 @@ const handleExport = async () => {
             <div class="flex justify-end pt-4">
               <button
                 @click="handleExport"
-                :disabled="isExporting || (exportType === 'tags' && selectedTags.length === 0) || (exportType === 'inn' && !innFile)"
+                :disabled="isExporting || (exportType === 'tags' && selectedTags.length === 0) || (exportType === 'positions' && selectedPositions.length === 0) || (exportType === 'inn' && !innFile)"
                 class="px-8 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {{ isExporting ? 'Экспорт...' : 'Экспортировать' }}
