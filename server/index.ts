@@ -388,11 +388,39 @@ app.post('/api/export/inn', upload.single('file'), async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename=inn_export.xlsx`)
     res.send(buffer)
-    
-    console.log('✅ Экспорт завершён успешно')
   } catch (error) {
     console.error('❌ Error exporting by INN:', error)
-    res.status(500).json({ error: 'Failed to export data by INN' })
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Получить список всех сервисов
+app.get('/api/services', async (req, res) => {
+  try {
+    const services = databaseService.getAllServices()
+    res.json(services)
+  } catch (error) {
+    console.error('Error fetching services:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Экспорт данных по используемым сервисам
+app.post('/api/export/services', async (req, res) => {
+  console.log('🔵 Получен запрос на экспорт по используемым сервисам')
+  
+  try {
+    const { services } = req.body
+    console.log('Выбранные сервисы:', services)
+    
+    const buffer = await exportService.exportByServices(services)
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=services_export_${Date.now()}.xlsx`)
+    res.send(buffer)
+  } catch (error) {
+    console.error('❌ Error exporting by services:', error)
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 

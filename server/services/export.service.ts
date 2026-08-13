@@ -830,6 +830,233 @@ class ExportService {
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
     return buffer
   }
+
+  // Экспорт данных по используемым сервисам
+  async exportByServices(selectedServices?: string[]): Promise<Buffer> {
+    console.log('Начинаем экспорт по используемым сервисам')
+    if (selectedServices && selectedServices.length > 0) {
+      console.log(`Выбрано сервисов: ${selectedServices.length}`)
+    } else {
+      console.log('Экспорт всех сервисов')
+    }
+
+    const workbook = XLSX.utils.book_new()
+
+    // Получаем данные о сервисах из опросов
+    let serviceData = databaseService.getServiceUsageData()
+
+    // Фильтруем по выбранным сервисам если указаны
+    if (selectedServices && selectedServices.length > 0) {
+      serviceData = serviceData.filter((row: any) => 
+        selectedServices.includes(row.service.trim())
+      )
+    }
+
+    console.log(`Получено записей: ${serviceData.length}`)
+
+    // Лист 1: Участники
+    const participantsData: any[] = []
+    const processedParticipants = new Set<string>()
+
+    serviceData.forEach((row: any) => {
+      if (!processedParticipants.has(row.email)) {
+        processedParticipants.add(row.email)
+        
+        participantsData.push({
+          'Используемые сервисы': row.service || '-',
+          'Email': row.email || '-',
+          'Имя': row.firstName || '-',
+          'Фамилия': row.lastName || '-',
+          'Должность': row.position || '-',
+          'Телефон': row.phone || '-',
+          'ИНН компании': row.inn || '-',
+          'Название компании': row.companyName || '-'
+        })
+      }
+    })
+
+    const participantsSheet = XLSX.utils.json_to_sheet(participantsData.length > 0 ? participantsData : [{ 'Сообщение': 'Нет данных' }])
+    XLSX.utils.book_append_sheet(workbook, participantsSheet, 'Участники')
+
+    // Лист 2: Вебинары участников с этими сервисами
+    const webinarsData: any[] = []
+    
+    for (const row of serviceData) {
+      const participantId = row.participantId
+
+      const webinarsWithDetails = databaseService.execQueryForExport(`
+        SELECT 
+          w.ID_вебинара as webinarId,
+          w.Название as webinarName,
+          w.Дата as webinarDate,
+          (SELECT GROUP_CONCAT(t2.Название_тега, ', ')
+           FROM "Вебинары-Теги" wt2
+           INNER JOIN Тег t2 ON wt2.ID_тега = t2.ID_тега
+           WHERE wt2.ID_мероприятия = w.ID_вебинара) as tags,
+          uw.Имя_в_чате as chatName,
+          uw.Статус_регистрации as registrationStatus,
+          uw.Дата_регистрации as registrationDate,
+          uw.Источники as sources,
+          uw.utm_source as utmSource,
+          uw.utm_medium as utmMedium,
+          uw.utm_campaign as utmCampaign,
+          uw.utm_content as utmContent,
+          uw.Платформа as platform,
+          uw.Страна as country,
+          uw.Город as city,
+          uw.Последний_IP as lastIP,
+          uw.Время_входа_первое as firstEntry,
+          uw.Время_выхода_последнее as lastExit,
+          uw.Присутствие_относительно_длительности as attendanceDuration,
+          uw.Присутствие_от_общей_длительности as attendancePercent,
+          uw.Кол_во_сообщений as messagesCount,
+          uw.Процент_от_общего_кол_ва_сообщений as messagesPercent,
+          uw.Кол_во_вопросов as questionsCount,
+          uw.Процент_от_общего_кол_ва_вопросов as questionsPercent,
+          uw.Количество_поднятых_рук as handsRaised,
+          uw.Количество_отправленных_эмодзи_реакций as emojiReactions
+        FROM "Участники-Вебинары" uw
+        INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара
+        WHERE uw.ID_участника = ?
+        ORDER BY w.Дата DESC
+      `, [participantId])
+      
+      webinarsWithDetails.forEach((wd: any) => {
+        webinarsData.push({
+          'Используемые сервисы': row.service || '-',
+          'Email участника': row.email,
+          'Имя': row.firstName || '-',
+          'Фамилия': row.lastName || '-',
+          'Должность': row.position || '-',
+          'Телефон': row.phone || '-',
+          'ИНН компании': row.inn || '-',
+          'Название компании': row.companyName || '-',
+          'Вебинар': wd.webinarName || '-',
+          'Дата вебинара': wd.webinarDate || '-',
+          'Теги': wd.tags || '-',
+          'Имя в чате': wd.chatName || '-',
+          'Статус регистрации': wd.registrationStatus || '-',
+          'Дата регистрации': wd.registrationDate || '-',
+          'Источники': wd.sources || '-',
+          'UTM Source': wd.utmSource || '-',
+          'UTM Medium': wd.utmMedium || '-',
+          'UTM Campaign': wd.utmCampaign || '-',
+          'UTM Content': wd.utmContent || '-',
+          'Платформа': wd.platform || '-',
+          'Страна': wd.country || '-',
+          'Город': wd.city || '-',
+          'Последний IP': wd.lastIP || '-',
+          'Время входа (первое)': wd.firstEntry || '-',
+          'Время выхода (последнее)': wd.lastExit || '-',
+          'Присутствие (длительность)': wd.attendanceDuration || '-',
+          'Присутствие (%)': wd.attendancePercent || '-',
+          'Количество сообщений': wd.messagesCount || 0,
+          'Процент сообщений': wd.messagesPercent || '-',
+          'Количество вопросов': wd.questionsCount || 0,
+          'Процент вопросов': wd.questionsPercent || '-',
+          'Поднятых рук': wd.handsRaised || 0,
+          'Эмодзи реакций': wd.emojiReactions || 0
+        })
+      })
+    }
+
+    const webinarsSheet = XLSX.utils.json_to_sheet(webinarsData.length > 0 ? webinarsData : [{ 'Сообщение': 'Нет данных' }])
+    XLSX.utils.book_append_sheet(workbook, webinarsSheet, 'Вебинары')
+
+    // Лист 3: Чаты
+    const chatsData: any[] = []
+    const processedForChats = new Set<string>()
+    
+    for (const row of serviceData) {
+      if (!processedForChats.has(row.email)) {
+        processedForChats.add(row.email)
+        
+        const chats = databaseService.getParticipantChat(row.email)
+        chats.forEach((c: any) => {
+          chatsData.push({
+            'Используемые сервисы': row.service || '-',
+            'ИНН компании': row.inn || '-',
+            'Название компании': row.companyName || '-',
+            'Email участника': row.email,
+            'Вебинар': c.webinarName || '-',
+            'Дата вебинара': c.webinarDate || '-',
+            'Время': c.time || '-',
+            'Сообщение': c.message || '-'
+          })
+        })
+      }
+    }
+
+    const chatsSheet = XLSX.utils.json_to_sheet(chatsData.length > 0 ? chatsData : [{ 'Сообщение': 'Нет данных' }])
+    XLSX.utils.book_append_sheet(workbook, chatsSheet, 'Чаты')
+
+    // Лист 4: Вопросы
+    const questionsData: any[] = []
+    const processedForQuestions = new Set<string>()
+    
+    for (const row of serviceData) {
+      if (!processedForQuestions.has(row.email)) {
+        processedForQuestions.add(row.email)
+        
+        const questions = databaseService.getParticipantQuestions(row.email)
+        questions.forEach((q: any) => {
+          questionsData.push({
+            'Используемые сервисы': row.service || '-',
+            'ИНН компании': row.inn || '-',
+            'Название компании': row.companyName || '-',
+            'Email участника': row.email,
+            'Вебинар': q.webinarName || '-',
+            'Дата вебинара': q.webinarDate || '-',
+            'Вопрос': q.question || '-',
+            'Статус': q.status || '-',
+            'Отвечающий': q.responder || '-',
+            'Ответ': q.answer || '-'
+          })
+        })
+      }
+    }
+
+    const questionsSheet = XLSX.utils.json_to_sheet(questionsData.length > 0 ? questionsData : [{ 'Сообщение': 'Нет данных' }])
+    XLSX.utils.book_append_sheet(workbook, questionsSheet, 'Вопросы')
+
+    // Лист 5: Ответы на опросы
+    const surveyAnswersData: any[] = []
+    const processedForSurveys = new Set<string>()
+    
+    for (const row of serviceData) {
+      if (!processedForSurveys.has(row.email)) {
+        processedForSurveys.add(row.email)
+        
+        const surveyAnswers = databaseService.getParticipantSurveyAnswers(row.email)
+        surveyAnswers.forEach((sa: any) => {
+          surveyAnswersData.push({
+            'Используемые сервисы': row.service || '-',
+            'ИНН компании': row.inn || '-',
+            'Название компании': row.companyName || '-',
+            'Email участника': row.email,
+            'Вебинар': sa.webinarName || '-',
+            'Дата вебинара': sa.webinarDate || '-',
+            'Вопрос опроса': sa.question || '-',
+            'Ответ': sa.answer || '-'
+          })
+        })
+      }
+    }
+
+    const surveyAnswersSheet = XLSX.utils.json_to_sheet(surveyAnswersData.length > 0 ? surveyAnswersData : [{ 'Сообщение': 'Нет данных' }])
+    XLSX.utils.book_append_sheet(workbook, surveyAnswersSheet, 'Ответы на опросы')
+
+    console.log(`Экспорт по сервисам завершён:
+  - Участников: ${participantsData.length}
+  - Вебинаров: ${webinarsData.length}
+  - Чатов: ${chatsData.length}
+  - Вопросов: ${questionsData.length}
+  - Ответов на опросы: ${surveyAnswersData.length}`)
+
+    // Конвертируем в Buffer
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+    return buffer
+  }
 }
 
 export default new ExportService()

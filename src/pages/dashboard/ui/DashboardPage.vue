@@ -22,10 +22,14 @@ const surveyListRef = ref<InstanceType<typeof SurveyList> | null>(null)
 const selectedTags = ref<number[]>([])
 const tags = ref<Tag[]>([])
 const isExporting = ref(false)
-const exportType = ref<'tags' | 'inn' | 'positions'>('tags')
+const exportType = ref<'tags' | 'inn' | 'positions' | 'services'>('tags')
 const innFile = ref<File | null>(null)
 const innFileInput = ref<HTMLInputElement | null>(null)
 const isDragging = ref(false)
+
+// Список сервисов
+const services = ref<{ service: string; userCount: number; companyCount: number }[]>([])
+const selectedServices = ref<string[]>([])
 
 // Структурированный список должностей с группировкой
 interface PositionGroup {
@@ -302,12 +306,14 @@ const handleBulkImportSuccess = () => {
 const openExportModal = () => {
   showExportModal.value = true
   fetchTags()
+  fetchServices()
 }
 
 const closeExportModal = () => {
   showExportModal.value = false
   selectedTags.value = []
   selectedPositions.value = []
+  selectedServices.value = []
   exportType.value = 'tags'
   innFile.value = null
   if (innFileInput.value) {
@@ -362,6 +368,15 @@ const fetchTags = async () => {
   }
 }
 
+const fetchServices = async () => {
+  try {
+    const response = await fetch('http://localhost:3000/api/services')
+    services.value = await response.json()
+  } catch (error) {
+    console.error('Error fetching services:', error)
+  }
+}
+
 const toggleTag = (tagId: number) => {
   const index = selectedTags.value.indexOf(tagId)
   if (index > -1) {
@@ -398,6 +413,23 @@ const toggleAllPositions = () => {
     selectedPositions.value = []
   } else {
     selectedPositions.value = [...allPositions]
+  }
+}
+
+const toggleService = (service: string) => {
+  const index = selectedServices.value.indexOf(service)
+  if (index > -1) {
+    selectedServices.value.splice(index, 1)
+  } else {
+    selectedServices.value.push(service)
+  }
+}
+
+const toggleAllServices = () => {
+  if (selectedServices.value.length === services.value.length) {
+    selectedServices.value = []
+  } else {
+    selectedServices.value = services.value.map(s => s.service)
   }
 }
 
@@ -465,6 +497,49 @@ const handleExport = async () => {
     } catch (error) {
       console.error('Error exporting:', error)
       alert('Ошибка при экспорте данных')
+    } finally {
+      isExporting.value = false
+    }
+  } else if (exportType.value === 'services') {
+    if (selectedServices.value.length === 0) {
+      alert('Выберите хотя бы один сервис')
+      return
+    }
+
+    isExporting.value = true
+
+    try {
+      console.log('Запрос экспорта по используемым сервисам')
+      
+      const response = await fetch('http://localhost:3000/api/export/services', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ services: selectedServices.value })
+      })
+
+      console.log('Ответ сервера:', response.status, response.statusText)
+
+      if (!response.ok) {
+        throw new Error('Export failed')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `services_export_${Date.now()}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      console.log('Экспорт по сервисам завершён успешно')
+      closeExportModal()
+    } catch (error) {
+      console.error('Error exporting services:', error)
+      alert('Ошибка при экспорте данных по сервисам')
     } finally {
       isExporting.value = false
     }
@@ -625,7 +700,7 @@ const handleExport = async () => {
 
           <div class="space-y-6">
             <!-- Переключатель типа экспорта -->
-            <div class="flex gap-4 border-b border-gray-200 pb-4">
+            <div class="flex gap-4 border-b border-gray-200 pb-4 flex-wrap">
               <button
                 @click="exportType = 'tags'"
                 :class="[
@@ -658,6 +733,17 @@ const handleExport = async () => {
                 ]"
               >
                 По ИНН
+              </button>
+              <button
+                @click="exportType = 'services'"
+                :class="[
+                  'px-4 py-2 rounded-lg font-medium transition',
+                  exportType === 'services'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+              >
+                По сервисам
               </button>
             </div>
 
@@ -856,11 +942,51 @@ const handleExport = async () => {
               </div>
             </div>
 
+            <!-- Экспорт по сервисам -->
+            <div v-if="exportType === 'services'">
+              <div class="flex items-center justify-between mb-3">
+                <label class="block text-lg font-medium text-gray-900">
+                  Выберите сервисы для экспорта
+                </label>
+                <button
+                  @click="toggleAllServices"
+                  class="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  {{ selectedServices.length === services.length ? 'Снять всё' : 'Выбрать всё' }}
+                </button>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-4 max-h-60 overflow-y-auto space-y-2">
+                <div v-if="services.length === 0" class="text-sm text-gray-500 text-center py-4">
+                  Загрузка сервисов...
+                </div>
+                <label
+                  v-for="service in services"
+                  :key="service.service"
+                  class="flex items-center gap-3 p-2 hover:bg-gray-100 rounded cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="selectedServices.includes(service.service)"
+                    @change="toggleService(service.service)"
+                    class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span class="text-sm text-gray-700">{{ service.service }}</span>
+                  
+                </label>
+              </div>
+              <div v-if="selectedServices.length > 0" class="mt-2 text-sm text-gray-600">
+                Выбрано сервисов: {{ selectedServices.length }}
+              </div>
+              <p class="mt-3 text-xs text-gray-600">
+                Экспорт включает: участников, вебинары, чаты, вопросы и ответы на опросы
+              </p>
+            </div>
+
             <!-- Кнопка экспорта -->
             <div class="flex justify-end pt-4">
               <button
                 @click="handleExport"
-                :disabled="isExporting || (exportType === 'tags' && selectedTags.length === 0) || (exportType === 'positions' && selectedPositions.length === 0) || (exportType === 'inn' && !innFile)"
+                :disabled="isExporting || (exportType === 'tags' && selectedTags.length === 0) || (exportType === 'positions' && selectedPositions.length === 0) || (exportType === 'services' && selectedServices.length === 0) || (exportType === 'inn' && !innFile)"
                 class="px-8 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {{ isExporting ? 'Экспорт...' : 'Экспортировать' }}

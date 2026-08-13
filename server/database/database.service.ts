@@ -1416,6 +1416,72 @@ class DatabaseService {
     return this.execQuery(query, [inn])
   }
 
+  // Получить данные по используемым сервисам из ответов на опросы
+  getServiceUsageData() {
+    const query = `
+      SELECT 
+        u.ID_участника as participantId,
+        e.Email as email,
+        u.Имя as firstName,
+        u.Фамилия as lastName,
+        u.Должность as position,
+        u.Номер_телефона as phone,
+        c.ИНН_компании as inn,
+        c.Название as companyName,
+        o.Вопрос as surveyQuestion,
+        oe.Ответ as service,
+        w.Название as webinarName,
+        w.Дата as webinarDate
+      FROM "Опросы-Email" oe
+      INNER JOIN Email e ON oe.ID_email = e.ID_email
+      INNER JOIN Участники u ON e.ID_участника = u.ID_участника
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Опросы o ON oe.ID_вопроса = o.ID_вопроса
+      INNER JOIN "Вебинары-Опросы" wo ON o.ID_опроса = wo.ID_опроса
+      INNER JOIN Вебинары w ON wo.ID_вебинара = w.ID_вебинара
+      WHERE oe.Ответ IS NOT NULL 
+        AND TRIM(oe.Ответ) != ''
+        AND (
+          LOWER(o.Вопрос) LIKE '%сервис%'
+          OR LOWER(o.Вопрос) LIKE '%программ%'
+          OR LOWER(o.Вопрос) LIKE '%каким%отчет%'
+          OR LOWER(o.Вопрос) LIKE '%каким%систем%'
+          OR LOWER(o.Вопрос) LIKE '%использ%'
+          OR LOWER(o.Вопрос) LIKE '%пользуетесь%'
+        )
+      ORDER BY c.Название, u.ID_участника, w.Дата DESC
+    `
+    return this.execQuery(query)
+  }
+
+  // Получить список всех уникальных сервисов из опросов
+  getAllServices() {
+    const query = `
+      SELECT DISTINCT
+        TRIM(oe.Ответ) as service,
+        COUNT(DISTINCT e.ID_участника) as userCount,
+        COUNT(DISTINCT c.ID_компании) as companyCount
+      FROM "Опросы-Email" oe
+      INNER JOIN Email e ON oe.ID_email = e.ID_email
+      INNER JOIN Участники u ON e.ID_участника = u.ID_участника
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
+      INNER JOIN Опросы o ON oe.ID_вопроса = o.ID_вопроса
+      WHERE oe.Ответ IS NOT NULL 
+        AND TRIM(oe.Ответ) != ''
+        AND (
+          LOWER(o.Вопрос) LIKE '%сервис%'
+          OR LOWER(o.Вопрос) LIKE '%программ%'
+          OR LOWER(o.Вопрос) LIKE '%каким%отчет%'
+          OR LOWER(o.Вопрос) LIKE '%каким%систем%'
+          OR LOWER(o.Вопрос) LIKE '%использ%'
+          OR LOWER(o.Вопрос) LIKE '%пользуетесь%'
+        )
+      GROUP BY TRIM(oe.Ответ)
+      ORDER BY userCount DESC, service ASC
+    `
+    return this.execQuery(query)
+  }
+
   // Получить все опросы
   getAllSurveys() {
     const query = `
