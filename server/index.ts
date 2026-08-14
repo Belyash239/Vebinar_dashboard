@@ -545,6 +545,380 @@ app.delete('/api/webinars/:id', (req, res) => {
   }
 })
 
+// Получить маппинги полей
+app.get('/api/field-mappings', async (req, res) => {
+  try {
+    const { UNIQUE_FIELDS_POOL } = await import('./services/field-mappings.js')
+    res.json({ fields: UNIQUE_FIELDS_POOL })
+  } catch (error) {
+    console.error('Error loading field mappings:', error)
+    res.status(500).json({ error: 'Failed to load field mappings' })
+  }
+})
+
+// Анализ файла (получение колонок и строк)
+app.post('/api/analyze-file',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const file = req.file
+
+      if (!file) {
+        return res.status(400).json({ error: 'File is required' })
+      }
+
+      const result = await parserService.readExcelColumns(file.path)
+      
+      // Удаляем временный файл
+      const fs = await import('fs')
+      fs.unlinkSync(file.path)
+      
+      res.json(result)
+    } catch (error) {
+      console.error('Error analyzing file:', error)
+      res.status(500).json({ 
+        error: 'Failed to analyze file',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
+// Извлечение названия и даты вебинара из файла
+app.post('/api/extract-webinar-info',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const file = req.file
+
+      if (!file) {
+        return res.status(400).json({ error: 'File is required' })
+      }
+
+      const { webinarName, webinarDate } = await parserService.parseMainFile(file.path, null, 'mts')
+      
+      // Удаляем временный файл
+      const fs = await import('fs')
+      fs.unlinkSync(file.path)
+      
+      res.json({ webinarName, webinarDate })
+    } catch (error) {
+      console.error('Error extracting webinar info:', error)
+      res.status(500).json({ 
+        error: 'Failed to extract webinar info',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
+// Загрузка с маппингом
+app.post('/api/upload-with-mapping',
+  upload.array('files'),
+  async (req, res) => {
+    let webinarId: number | null = null
+    
+    try {
+      const files = req.files as Express.Multer.File[]
+      const { tags, importPositions, webinarName, webinarDate, mappings, formats } = req.body
+
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'At least one file is required' })
+      }
+
+      if (!webinarName || !webinarDate) {
+        return res.status(400).json({ error: 'Webinar name and date are required' })
+      }
+
+      // Парсим маппинги и форматы
+      const mappingsArray = typeof mappings === 'string' ? [mappings] : mappings
+      const formatsArray = typeof formats === 'string' ? [formats] : formats
+      
+      const parsedMappings = mappingsArray.map((m: string) => JSON.parse(m))
+      
+      // Импортируем функции определения
+      const { detectFileType } = await import('./services/field-mappings.js')
+      
+      // Определяем систему: если есть хотя бы один основной файл МТС-линк, то вся система МТС-линк
+      let systemFormat: 'mts' | 'proofix' = formatsArray[0] as 'mts' | 'proofix'
+      
+      // Проверяем наличие основного файла МТС-линк
+      for (let i = 0; i < files.length; i++) {
+        const format = formatsArray[i] as 'mts' | 'proofix'
+        
+        // Определяем тип файла по формату, а не по маппингу
+        // Для МТС-линк: ищем основной файл
+        if (format === 'mts') {
+          // Читаем колонки файла напрямую
+          const { columns } = await parserService.readExcelColumns(files[i].path)
+          const fileType = detectFileType(columns)
+          
+          if (fileType === 'main') {
+            systemFormat = 'mts'
+            console.log('📊 Обнаружен основной файл МТС-линк → система: МТС-линк')
+            break
+          }
+        }
+      }
+      
+      // Если основного МТС-линк нет, определяем по большинству
+      if (systemFormat !== 'mts') {
+        const formatCounts: Record<string, number> = {}
+        for (const f of formatsArray) {
+          formatCounts[f] = (formatCounts[f] || 0) + 1
+        }
+        
+        let maxCount = 0
+        let dominantFormat = formatsArray[0] as 'mts' | 'proofix'
+        
+        for (const [format, count] of Object.entries(formatCounts)) {
+          if (count > maxCount) {
+            maxCount = count
+            dominantFormat = format as 'mts' | 'proofix'
+          }
+        }
+        
+        systemFormat = dominantFormat
+        console.log('📊 Определена система по большинству:', systemFormat, formatCounts)
+      }
+      
+      console.log(`📊 Итоговая система: ${systemFormat}`)
+      
+      // Формируем название с датой
+      const date = new Date(webinarDate)
+      const formattedDate = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`
+      const formattedWebinarName = `${webinarName}_${formattedDate}`
+
+      // Создать вебинар
+      webinarId = databaseService.createOrUpdateWebinar(formattedWebinarName, webinarDate) as number
+
+      // Добавить теги
+      if (tags) {
+        const tagsList = JSON.parse(tags)
+        for (const tag of tagsList) {
+          const tagId = databaseService.addTag(tag)
+          if (tagId) {
+            databaseService.linkWebinarTag(webinarId, tagId)
+          }
+        }
+      }
+
+      // Группируем файлы по типу
+      const filesByType: Record<string, { file: Express.Multer.File, mapping: Record<string, string> }[]> = {
+        main: [],
+        questions: [],
+        chat: [],
+        survey: [],
+        attendance: []
+      }
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        
+        // Читаем колонки файла напрямую для определения типа
+        const { columns } = await parserService.readExcelColumns(file.path)
+        const fileType = detectFileType(columns)
+        
+        console.log(`📄 Файл ${file.originalname}: тип = ${fileType}, колонок = ${columns.length}`)
+        
+        if (fileType !== 'unknown') {
+          const mapping = parsedMappings[i]
+          filesByType[fileType].push({ file, mapping })
+        }
+      }
+
+      // Обрабатываем файлы существующими парсерами с ЕДИНОЙ системой
+      
+      // 1. Основной файл
+      if (filesByType.main.length > 0) {
+        const { file } = filesByType.main[0]
+        console.log(`🔧 Парсинг основного файла с форматом: ${systemFormat}`)
+        await parserService.parseMainFile(file.path, webinarId, systemFormat)
+      }
+      
+      // 2. Вопросы (только МТС-линк)
+      if (systemFormat === 'mts' && filesByType.questions.length > 0) {
+        const { file } = filesByType.questions[0]
+        console.log(`🔧 Парсинг вопросов с форматом: ${systemFormat}`)
+        await parserService.parseQuestionsFile(file.path, webinarId, systemFormat)
+      }
+      
+      // 3. Чат
+      if (filesByType.chat.length > 0) {
+        const { file } = filesByType.chat[0]
+        console.log(`🔧 Парсинг чата с форматом: ${systemFormat}`)
+        await parserService.parseChatFile(file.path, webinarId, systemFormat)
+      }
+      
+      // 4. Опросы (может быть несколько файлов)
+      if (filesByType.survey.length > 0) {
+        const shouldImportPositions = importPositions === 'true'
+        console.log(`🔧 Парсинг опросов: ${filesByType.survey.length} файл(ов) с форматом: ${systemFormat}`)
+        
+        for (let i = 0; i < filesByType.survey.length; i++) {
+          const { file } = filesByType.survey[i]
+          console.log(`  📊 Опрос ${i + 1}/${filesByType.survey.length}: ${file.originalname}`)
+          await parserService.parseSurveyFile(file.path, webinarId, shouldImportPositions, systemFormat)
+        }
+      }
+      
+      // 5. Присутствие (только Proofix)
+      if (systemFormat === 'proofix' && filesByType.attendance.length > 0) {
+        const { file } = filesByType.attendance[0]
+        console.log(`🔧 Парсинг присутствия Proofix`)
+        await parserService.parseProofixAttendanceFile(file.path, webinarId)
+      }
+
+      // Сохраняем БД
+      console.log('Сохранение данных в БД...')
+      databaseService.saveDatabase()
+      console.log('✅ Импорт завершён успешно')
+
+      res.json({ 
+        success: true, 
+        webinarId,
+        webinarName: formattedWebinarName,
+        webinarDate,
+        message: 'Files uploaded and processed successfully' 
+      })
+    } catch (error) {
+      console.error('Error uploading files:', error)
+      
+      // Откатить изменения
+      if (webinarId) {
+        try {
+          databaseService.deleteWebinar(webinarId)
+        } catch (rollbackError) {
+          console.error('Error rolling back:', rollbackError)
+        }
+      }
+      
+      res.status(500).json({ 
+        error: 'Failed to upload files',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
+// Унифицированная загрузка файлов с автоматическим определением формата
+app.post('/api/upload-unified', 
+  upload.fields([
+    { name: 'mainFile', maxCount: 1 },
+    { name: 'chatFile', maxCount: 1 },
+    { name: 'surveyFile', maxCount: 1 },
+    { name: 'attendanceFile', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    let webinarId: number | null = null
+    
+    try {
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] }
+      const { tags, importPositions, webinarName, webinarDate } = req.body
+
+      if (!files.mainFile) {
+        return res.status(400).json({ error: 'Main file is required' })
+      }
+
+      // Определяем формат по количеству колонок в основном файле
+      const mainFilePath = files.mainFile[0].path
+      const { columns } = await parserService.readExcelColumns(mainFilePath)
+      
+      console.log(`📊 Колонок в основном файле: ${columns.length}`)
+      
+      // Эвристика: МТС-линк имеет >20 колонок, Proofix имеет ~8 колонок
+      const format: 'mts' | 'proofix' = columns.length > 15 ? 'mts' : 'proofix'
+      
+      console.log(`🔍 Автоматически определён формат: ${format}`)
+
+      // Парсить основной файл и получить название вебинара и дату
+      const { webinarName: parsedWebinarName, webinarDate: parsedWebinarDate } = await parserService.parseMainFile(mainFilePath, null, format)
+      
+      // Для Proofix используем название и дату из формы, для МТС-линк из файла
+      const finalWebinarName = format === 'proofix' ? webinarName : (parsedWebinarName || webinarName)
+      const finalWebinarDate = format === 'proofix' ? webinarDate : (parsedWebinarDate || webinarDate)
+      
+      if (!finalWebinarName) {
+        return res.status(400).json({ error: 'Webinar name not found' })
+      }
+
+      // Формируем название с датой
+      let formattedWebinarName = finalWebinarName
+      if (finalWebinarDate) {
+        const date = new Date(finalWebinarDate)
+        const formattedDate = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`
+        formattedWebinarName = `${finalWebinarName}_${formattedDate}`
+      }
+
+      // Создать или обновить вебинар
+      webinarId = databaseService.createOrUpdateWebinar(formattedWebinarName, finalWebinarDate || new Date().toISOString().split('T')[0]) as number
+
+      // Добавить теги
+      if (tags) {
+        const tagsList = JSON.parse(tags)
+        for (const tag of tagsList) {
+          const tagId = databaseService.addTag(tag)
+          if (tagId) {
+            databaseService.linkWebinarTag(webinarId, tagId)
+          }
+        }
+      }
+
+      // Повторно парсить основной файл с ID вебинара
+      await parserService.parseMainFile(mainFilePath, webinarId, format)
+
+      // Для Proofix: парсим файл присутствия
+      if (format === 'proofix' && files.attendanceFile) {
+        const attendanceFilePath = files.attendanceFile[0].path
+        await parserService.parseProofixAttendanceFile(attendanceFilePath, webinarId)
+      }
+
+      // Парсим чат
+      if (files.chatFile) {
+        const chatFilePath = files.chatFile[0].path
+        await parserService.parseChatFile(chatFilePath, webinarId, format)
+      }
+
+      // Парсить файл опросов если загружен
+      if (files.surveyFile) {
+        const surveyFilePath = files.surveyFile[0].path
+        const shouldImportPositions = importPositions === 'true'
+        await parserService.parseSurveyFile(surveyFilePath, webinarId, shouldImportPositions, format)
+      }
+
+      // Сохраняем БД
+      console.log('Сохранение данных в БД...')
+      databaseService.saveDatabase()
+      console.log('✅ Импорт завершён успешно')
+
+      res.json({ 
+        success: true, 
+        webinarId,
+        webinarName: formattedWebinarName,
+        webinarDate: finalWebinarDate,
+        detectedFormat: format,
+        message: 'Files uploaded and processed successfully' 
+      })
+    } catch (error) {
+      console.error('Error uploading files:', error)
+      
+      // Откатить изменения
+      if (webinarId) {
+        try {
+          databaseService.deleteWebinar(webinarId)
+        } catch (rollbackError) {
+          console.error('Error rolling back:', rollbackError)
+        }
+      }
+      
+      res.status(500).json({ 
+        error: 'Failed to upload files',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+)
+
 // Загрузить файлы и импортировать данные
 app.post('/api/upload', 
   upload.fields([

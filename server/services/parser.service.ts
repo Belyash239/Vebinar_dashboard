@@ -1,5 +1,6 @@
 import { createRequire } from 'module'
 import databaseService from '../database/database.service.js'
+import { UNIQUE_FIELDS_POOL, autoMapColumns } from './field-mappings.js'
 
 const require = createRequire(import.meta.url)
 const XLSX = require('xlsx')
@@ -347,7 +348,7 @@ class ParserService {
           row['Фамилия'] || '',
           innStr,
           phoneNumber || null,
-          null, // Название компании не в регистрациях
+          undefined, // Название компании не в регистрациях
           undefined
         )
 
@@ -530,19 +531,28 @@ class ParserService {
     
     const workbook = XLSX.readFile(filePath)
     
-    // Ищем лист "Ответы"
-    const surveySheetName = workbook.SheetNames.find((name: string) => 
-      name.toLowerCase().includes('ответ')
-    )
+    console.log('📋 Все листы в файле опросов:', workbook.SheetNames)
     
+    // Ищем лист "Ответы" с учётом возможных пробелов и регистра
+    let surveySheetName = workbook.SheetNames.find((name: string) => {
+      const trimmedLower = name.trim().toLowerCase()
+      const matches = trimmedLower === 'ответы' || trimmedLower.startsWith('ответ')
+      console.log(`  Проверка листа "${name}" (после trim: "${name.trim()}", toLowerCase: "${trimmedLower}"): ${matches ? '✓ подходит' : '✗ не подходит'}`)
+      return matches
+    })
+    
+    // Если не найден, берём первый лист
     if (!surveySheetName) {
-      throw new Error('Лист "Ответы" не найден в файле')
+      surveySheetName = workbook.SheetNames[0]
+      console.log(`⚠️ Лист с "Ответ" не найден, используется первый лист: "${surveySheetName}"`)
+    } else {
+      console.log(`✅ Выбран лист: "${surveySheetName}"`)
     }
     
     const sheet = workbook.Sheets[surveySheetName]
     const data = XLSX.utils.sheet_to_json(sheet)
 
-    console.log(`Парсинг опросов: лист "${surveySheetName}", строк: ${data.length}`)
+    console.log(`Парсинг опросов МТС-линк: лист "${surveySheetName}", строк: ${data.length}`)
     console.log(`Привязка к вебинару: ${webinarId ? `ID ${webinarId}` : 'Не привязано'}`)
 
     // Проверим первую строку для понимания структуры
@@ -677,10 +687,11 @@ class ParserService {
         }
 
         const db = databaseService.getDatabase()
-        const emailResult = db!.exec('SELECT ID_email FROM Email WHERE Email = ?', [email])
+        const emailResult = db!.exec('SELECT ID_email, ID_участника FROM Email WHERE Email = ?', [email])
 
         if (emailResult.length > 0 && emailResult[0].values.length > 0) {
           const emailId = emailResult[0].values[0][0] as number
+          const participantId = emailResult[0].values[0][1] as number
           
           // Конвертируем минуты в HH:MM:SS
           const attendanceMinutes = row['Продолжительность присутствия участника,   минут'] || 
@@ -708,7 +719,7 @@ class ParserService {
               utm_content = ?,
               utm_term = ?,
               utm_custom = ?
-            WHERE ID_email = ? AND ID_вебинара = ?
+            WHERE ID_участника = ? AND ID_вебинара = ?
           `, [
             attendanceDuration,
             attendancePercent,
@@ -718,7 +729,7 @@ class ParserService {
             utmParams.utm_content,
             utmParams.utm_term,
             utmParams.utm_custom,
-            emailId,
+            participantId,
             webinarId
           ])
           
@@ -906,10 +917,29 @@ class ParserService {
     
     console.log('📂 Листы в файле:', workbook.SheetNames)
     
-    // Берём первый лист (или первый не "Общая информация")
-    const sheetName = workbook.SheetNames.find((name: string) => 
-      !name.toLowerCase().includes('общая')
-    ) || workbook.SheetNames[0]
+    // Ищем специфичные листы в порядке приоритета
+    let sheetName: string | undefined
+    
+    // 1. Для опросов: ищем лист "Ответы"
+    sheetName = workbook.SheetNames.find((name: string) => 
+      name.trim().toLowerCase() === 'ответы' || name.trim().toLowerCase().startsWith('ответ')
+    )
+    
+    // 2. Если не нашли, берём первый лист (не "Общая информация")
+    if (!sheetName) {
+      sheetName = workbook.SheetNames.find((name: string) => 
+        !name.toLowerCase().includes('общая')
+      )
+    }
+    
+    // 3. Если всё ещё нет, берём первый лист
+    if (!sheetName && workbook.SheetNames.length > 0) {
+      sheetName = workbook.SheetNames[0]
+    }
+    
+    if (!sheetName) {
+      throw new Error('Не найдено ни одного листа в файле')
+    }
     
     console.log('📄 Выбран лист:', sheetName)
     
@@ -1297,6 +1327,171 @@ class ParserService {
     }
     console.log('====================================\n')
   }
+
+  // Универсальный парсер с маппингом
+  async parseFileWithMapping(
+    filePath: string,
+    webinarId: number,
+    mapping: Record<string, string>,
+    format: 'mts' | 'proofix',
+    importPositions: boolean = false
+  ) {
+    const workbook = XLSX.readFile(filePath)
+    const sheetName = workbook.SheetNames.find((name: string) => 
+      !name.toLowerCase().includes('общая')
+    ) || workbook.SheetNames[0]
+    
+    const sheet = workbook.Sheets[sheetName]
+    const data = XLSX.utils.sheet_to_json(sheet)
+
+    console.log(`Парсинг файла с маппингом: лист "${sheetName}", строк: ${data.length}`)
+    console.log('Маппинг полей:', mapping)
+
+    let processedCount = 0
+    let skippedInnCount = 0
+    let skippedNoEmailCount = 0
+
+    for (const row of data as any[]) {
+      try {
+        // Извлекаем значения согласно маппингу
+        const mappedData: any = {}
+        
+        for (const [dbField, excelCol] of Object.entries(mapping)) {
+          if (excelCol && row[excelCol] !== undefined) {
+            mappedData[dbField] = row[excelCol]
+          }
+        }
+
+        // Пропускаем строки без Email
+        if (!mappedData['Email']) {
+          skippedNoEmailCount++
+          continue
+        }
+
+        // Валидация ИНН
+        let innValue = mappedData['ИНН_компании'] || mappedData['ИНН']
+        let innStr = ''
+        
+        if (innValue && String(innValue).trim() !== '') {
+          innStr = String(innValue).trim()
+          
+          if (!/^\d{10}$|^\d{12}$/.test(innStr)) {
+            skippedInnCount++
+            innStr = ''
+          }
+        } else {
+          skippedInnCount++
+          innStr = ''
+        }
+
+        // Обработка телефона
+        let phoneNumber = mappedData['Телефон']
+        if (phoneNumber) {
+          if (typeof phoneNumber === 'number') {
+            phoneNumber = String(phoneNumber)
+          } else {
+            phoneNumber = String(phoneNumber).trim()
+          }
+          
+          phoneNumber = phoneNumber.replace(/[\s\-\(\)]/g, '')
+          
+          if (phoneNumber.startsWith('8') && phoneNumber.length === 11) {
+            phoneNumber = '+7' + phoneNumber.slice(1)
+          }
+          
+          if (phoneNumber.startsWith('7') && phoneNumber.length === 11 && !phoneNumber.startsWith('+')) {
+            phoneNumber = '+' + phoneNumber
+          }
+          
+          if (phoneNumber.startsWith('+7') && phoneNumber.length === 12) {
+            phoneNumber = `${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)}-${phoneNumber.slice(8, 10)}-${phoneNumber.slice(10, 12)}`
+          }
+        }
+
+        // Парсим UTM метки для Proofix
+        let utmParams = {
+          utm_source: null as string | null,
+          utm_medium: null as string | null,
+          utm_campaign: null as string | null,
+          utm_content: null as string | null,
+          utm_term: null as string | null,
+          utm_custom: null as string | null
+        }
+        
+        if (format === 'proofix' && mappedData['Utm_метки']) {
+          utmParams = this.parseProofixUtm(mappedData['Utm_метки'])
+        } else {
+          utmParams.utm_source = mappedData['utm_source'] || null
+          utmParams.utm_medium = mappedData['utm_medium'] || null
+          utmParams.utm_campaign = mappedData['utm_campaign'] || null
+          utmParams.utm_content = mappedData['utm_content'] || null
+          utmParams.utm_term = mappedData['utm_term'] || null
+          utmParams.utm_custom = mappedData['utm_custom'] || null
+        }
+
+        // Конвертация времени для Proofix
+        let attendanceDuration = null
+        if (format === 'proofix' && mappedData['Продолжительность_присутствия']) {
+          attendanceDuration = this.minutesToHHMMSS(mappedData['Продолжительность_присутствия'])
+        } else {
+          attendanceDuration = mappedData['Присутствие_относительно_длительности'] || null
+        }
+
+        // Создаём участника
+        const participantId = databaseService.getOrCreateParticipantByEmail(
+          mappedData['Email'],
+          mappedData['Имя'] || '',
+          mappedData['Фамилия'] || '',
+          innStr,
+          phoneNumber || null,
+          mappedData['Компания'] || undefined,
+          mappedData['Должность'] || undefined
+        )
+
+        // Добавляем связь участник-вебинар
+        databaseService.addParticipantWebinar(participantId, webinarId, {
+          chatName: mappedData['Имя_в_чате'] || null,
+          company: mappedData['Компания'] || null,
+          registrationStatus: mappedData['Статус_регистрации'] || (format === 'proofix' ? 'Зарегистрирован' : null),
+          registrationDate: mappedData['Дата_регистрации'] || mappedData['Дата_создания'] || null,
+          sources: mappedData['Источники'] || mappedData['Источник'] || null,
+          utmSource: utmParams.utm_source,
+          utmMedium: utmParams.utm_medium,
+          utmCampaign: utmParams.utm_campaign,
+          utmContent: utmParams.utm_content,
+          utmTerm: utmParams.utm_term,
+          utmCustom: utmParams.utm_custom,
+          platform: mappedData['Платформа'] || null,
+          country: mappedData['Страна'] || null,
+          city: mappedData['Город'] || null,
+          lastIP: mappedData['Последний_IP'] || null,
+          firstEntry: mappedData['Время_входа'] || null,
+          lastExit: mappedData['Время_выхода'] || null,
+          attendanceDuration: attendanceDuration,
+          attendancePercent: mappedData['Присутствие_от_общей_длительности'] || null,
+          messagesCount: mappedData['Кол_во_сообщений'] || 0,
+          messagesPercent: mappedData['Процент_сообщений'] || null,
+          questionsCount: mappedData['Кол_во_вопросов'] || 0,
+          questionsPercent: mappedData['Процент_вопросов'] || null,
+          handsRaised: mappedData['Поднятые_руки'] || 0,
+          emojiReactions: mappedData['Эмодзи_реакции'] || 0
+        })
+        
+        processedCount++
+      } catch (error) {
+        console.error('Ошибка при обработке строки:', error)
+      }
+    }
+    
+    console.log(`✅ Импортировано записей: ${processedCount} из ${data.length}`)
+    if (skippedNoEmailCount > 0) {
+      console.log(`⚠️ Пропущено записей без Email: ${skippedNoEmailCount}`)
+    }
+    if (skippedInnCount > 0) {
+      console.log(`⚠️ Записей с некорректным/отсутствующим ИНН: ${skippedInnCount}`)
+    }
+  }
 }
 
 export default new ParserService()
+
