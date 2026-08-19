@@ -119,7 +119,7 @@ class ExportService {
       'Руководитель / владелец бухгалтерской фирмы': ['руководитель бухгалтерской фирмы', 'владелец бухгалтерской фирмы'],
       
       // Директора и руководители высшего звена
-      'Генеральный директор/ Директор': ['генеральный директор', 'генеральный', 'ген. директор', 'гендиректор', 'директор'],
+      'Генеральный директор/ Директор': ['генеральный директор', 'ген. директор', 'ген.директор', 'гендиректор', 'директор', 'Ген директор'],
       'Исполнительный директор': ['исполнительный директор', 'исп. директор'],
       'Коммерческий директор': ['коммерческий директор', 'ком. директор'],
       'Финансовый директор': ['финансовый директор', 'фин. директор'],
@@ -276,11 +276,12 @@ class ExportService {
       }
       
       // Получаем участников для всех паттернов этой должности
+      const allParticipantsForPosition: any[] = []
+      
       for (const pattern of searchPatterns) {
         console.log(`  Поиск по паттерну: "${pattern}"`)
         
         // Получаем ВСЕ записи с должностями и фильтруем на стороне JS
-        // Это решает проблему с LOWER() в SQLite для кириллицы
         const allWithPositions = databaseService.execQueryForExport(`
           SELECT 
             u.ID_участника as participantId,
@@ -306,11 +307,23 @@ class ExportService {
           
           // Для "ип" требуем точное совпадение или наличие слова целиком
           if (patternLower === 'ип') {
-            // Точное совпадение
             if (positionLower === 'ип') return true
-            // Слово целиком (не часть другого слова)
-            const words = positionLower.split(/[\s,\.\-]+/)
+            const words = positionLower.split(/[\s,\.\-\/]+/)
             return words.includes('ип')
+          }
+          
+          // Для "директор" - только точное совпадение
+          if (patternLower === 'директор') {
+            return positionLower === 'директор'
+          }
+          
+          // Для паттернов с "ген" и "гендиректор" - исключаем замов
+          if (patternLower.includes('ген') || patternLower.includes('гендиректор')) {
+            // Проверяем, что должность содержит паттерн
+            if (!positionLower.includes(patternLower)) return false
+            // Исключаем замов
+            if (positionLower.includes('зам') || positionLower.includes('заместитель')) return false
+            return true
           }
           
           // Для остальных - содержит подстроку
@@ -327,11 +340,20 @@ class ExportService {
             console.log(`      ${idx + 1}. "${p.position}" (Email: ${p.email || 'нет'})`)
           })
         }
+        
+        // Добавляем участников в общий список (избегаем дублей по email)
+        participants.forEach((p: any) => {
+          const alreadyAdded = allParticipantsForPosition.some(ap => ap.email === p.email)
+          if (!alreadyAdded) {
+            allParticipantsForPosition.push(p)
+          }
+        })
+      }
 
-      console.log(`Найдено участников для "${position}": ${participants.length}`)
+      console.log(`Найдено участников для "${position}": ${allParticipantsForPosition.length}`)
 
       // 1. Участники
-      participants.forEach((p: any) => {
+      allParticipantsForPosition.forEach((p: any) => {
         // Проверяем, не добавлен ли уже этот участник (чтобы избежать дублей)
         const alreadyAdded = participantsData.some(pd => pd.Email === p.email)
         if (!alreadyAdded) {
@@ -348,7 +370,7 @@ class ExportService {
       })
 
       // 2. Для каждого участника получаем вебинары с полной информацией
-      for (const participant of participants) {
+      for (const participant of allParticipantsForPosition) {
         const participantId = participant.participantId
 
         const webinarsWithDetails = databaseService.execQueryForExport(`
@@ -472,7 +494,6 @@ class ExportService {
           })
         })
       }
-      } // Закрываем цикл по паттернам
     }
 
     // Создаём листы Excel

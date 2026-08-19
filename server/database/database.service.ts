@@ -1479,7 +1479,82 @@ class DatabaseService {
       GROUP BY TRIM(oe.Ответ)
       ORDER BY userCount DESC, service ASC
     `
-    return this.execQuery(query)
+    const results = this.execQuery(query)
+    
+    // Функция для получения базового имени сервиса (без версии)
+    const getBaseName = (name: string): string => {
+      let baseName = name.trim()
+      // Убираем версии (цифры после названия)
+      baseName = baseName.replace(/\s+\d+(\.\d+)*\s*$/i, '')
+      // Убираем "версия X" в конце
+      baseName = baseName.replace(/\s+версия\s+\d+(\.\d+)*/i, '')
+      // Убираем текст в скобках в конце
+      baseName = baseName.replace(/\s*\([^)]*\)\s*$/i, '')
+      return baseName.trim()
+    }
+    
+    // Разбиваем ответы с несколькими сервисами (через | или ,) и собираем уникальные
+    const serviceMap = new Map<string, { userCount: number; companyCount: number; baseName: string }>()
+    
+    for (const row of results) {
+      const service = row.service as string
+      const userCount = row.userCount as number
+      const companyCount = row.companyCount as number
+      
+      // Разделяем по | или ,
+      const services = service.split(/[|,]/).map(s => s.trim()).filter(s => s.length > 0)
+      
+      for (const svc of services) {
+        const baseName = getBaseName(svc)
+        
+        // Ищем, есть ли уже запись с таким базовым именем
+        let existingKey: string | null = null
+        for (const [key, value] of serviceMap.entries()) {
+          if (value.baseName === baseName) {
+            existingKey = key
+            break
+          }
+        }
+        
+        if (existingKey) {
+          // Если есть, решаем какую версию оставить
+          // Оставляем ту, что длиннее (с версией)
+          if (svc.length > existingKey.length) {
+            // Новая версия длиннее - заменяем
+            const existing = serviceMap.get(existingKey)!
+            serviceMap.delete(existingKey)
+            serviceMap.set(svc, {
+              userCount: existing.userCount + userCount,
+              companyCount: existing.companyCount + companyCount,
+              baseName
+            })
+          } else {
+            // Старая версия длиннее или равна - просто добавляем счетчики
+            const existing = serviceMap.get(existingKey)!
+            existing.userCount += userCount
+            existing.companyCount += companyCount
+          }
+        } else {
+          // Новая запись
+          serviceMap.set(svc, { userCount, companyCount, baseName })
+        }
+      }
+    }
+    
+    // Преобразуем Map обратно в массив и сортируем
+    return Array.from(serviceMap.entries())
+      .map(([service, counts]) => ({
+        service,
+        userCount: counts.userCount,
+        companyCount: counts.companyCount
+      }))
+      .sort((a, b) => {
+        // Сортируем по количеству пользователей (по убыванию), затем по названию
+        if (b.userCount !== a.userCount) {
+          return b.userCount - a.userCount
+        }
+        return a.service.localeCompare(b.service)
+      })
   }
 
   // Получить все опросы

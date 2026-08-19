@@ -677,6 +677,7 @@ class ParserService {
 
     let processedCount = 0
     let notFoundCount = 0
+    let maxAttendanceMinutes = 0
 
     for (const row of data as any[]) {
       try {
@@ -698,6 +699,11 @@ class ParserService {
                                     row['Продолжительность присутствия участника, минут'] ||
                                     row['Продолжительность присутствия участника'] ||
                                     0
+          
+          // Отслеживаем максимальную продолжительность для определения длительности вебинара
+          if (attendanceMinutes > maxAttendanceMinutes) {
+            maxAttendanceMinutes = attendanceMinutes
+          }
           
           const attendanceDuration = this.minutesToHHMMSS(attendanceMinutes)
           
@@ -739,6 +745,49 @@ class ParserService {
         }
       } catch (error) {
         console.error('Ошибка при обработке присутствия Proofix:', error)
+      }
+    }
+    
+    // Пересчитываем проценты присутствия на основе максимальной продолжительности
+    if (maxAttendanceMinutes > 0) {
+      const db = databaseService.getDatabase()
+      
+      console.log(`📊 Максимальная продолжительность присутствия: ${maxAttendanceMinutes} мин`)
+      
+      // Получаем всех участников этого вебинара с их продолжительностью присутствия
+      const participants = db!.exec(`
+        SELECT 
+          ID_участника,
+          Присутствие_относительно_длительности
+        FROM "Участники-Вебинары"
+        WHERE ID_вебинара = ?
+          AND Присутствие_относительно_длительности IS NOT NULL
+      `, [webinarId])
+      
+      if (participants.length > 0 && participants[0].values.length > 0) {
+        for (const row of participants[0].values) {
+          const participantId = row[0] as number
+          const duration = row[1] as string
+          
+          if (duration) {
+            // Парсим HH:MM:SS в секунды
+            const parts = duration.split(':')
+            const seconds = parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2])
+            
+            // Вычисляем процент от максимальной продолжительности
+            const percent = (seconds * 100.0) / (maxAttendanceMinutes * 60)
+            const percentStr = percent.toFixed(2).replace('.', ',') + '%'
+            
+            // Обновляем запись
+            db!.run(`
+              UPDATE "Участники-Вебинары"
+              SET Присутствие_от_общей_длительности = ?
+              WHERE ID_участника = ? AND ID_вебинара = ?
+            `, [percentStr, participantId, webinarId])
+          }
+        }
+        
+        console.log(`📊 Пересчитаны проценты присутствия для ${participants[0].values.length} участников`)
       }
     }
     
@@ -849,6 +898,12 @@ class ParserService {
             
             // Пропускаем поля "Дата ответа" (они идут парой с вопросами)
             if (field.toLowerCase().includes('дата ответа')) {
+              continue
+            }
+            
+            // Пропускаем технические поля Proofix (CODE и другие служебные)
+            const fieldUpper = field.toUpperCase().trim()
+            if (fieldUpper === 'CODE' || fieldUpper === 'ID' || fieldUpper === 'UUID' || fieldUpper === 'GUID') {
               continue
             }
             
