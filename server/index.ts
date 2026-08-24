@@ -715,17 +715,35 @@ app.post('/api/upload-with-mapping',
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         
-        // Читаем колонки файла напрямую для определения типа
-        const { columns } = await parserService.readExcelColumns(file.path)
-        const fileType = detectFileType(columns)
+        // Сначала определяем тип файла по названиям листов (быстро)
+        let fileType = await parserService.detectFileTypeBySheets(file.path)
         
-        console.log(`📄 Файл ${file.originalname}: тип = ${fileType}, колонок = ${columns.length}`)
+        // Если тип unknown, читаем колонки и определяем по старому методу
+        if (fileType === 'unknown') {
+          const { columns } = await parserService.readExcelColumns(file.path, 'main')
+          fileType = detectFileType(columns)
+        } else {
+          // Читаем колонки с правильным типом
+          await parserService.readExcelColumns(file.path, fileType)
+        }
+        
+        console.log(`📄 Файл ${file.originalname}: тип = ${fileType}`)
         
         if (fileType !== 'unknown') {
           const mapping = parsedMappings[i]
           filesByType[fileType].push({ file, mapping })
+          console.log(`  ✓ Добавлен в filesByType.${fileType}`)
+        } else {
+          console.log(`  ✗ Тип unknown, файл пропущен`)
         }
       }
+
+      console.log(`\n📊 Итоговое распределение файлов по типам:`)
+      console.log(`  - main: ${filesByType.main.length}`)
+      console.log(`  - questions: ${filesByType.questions.length}`)
+      console.log(`  - chat: ${filesByType.chat.length}`)
+      console.log(`  - survey: ${filesByType.survey.length}`)
+      console.log(`  - attendance: ${filesByType.attendance.length}`)
 
       // Обрабатываем файлы существующими парсерами с ЕДИНОЙ системой
       
@@ -1078,18 +1096,26 @@ app.post('/api/upload-survey',
 app.post('/api/bulk-import/columns',
   upload.single('file'),
   async (req, res) => {
+    console.log('\n📋 ЗАПРОС НА ЧТЕНИЕ КОЛОНОК ФАЙЛА')
+    
     try {
       const file = req.file
 
       if (!file) {
+        console.log('❌ Файл не предоставлен')
         return res.status(400).json({ error: 'File is required' })
       }
 
+      console.log(`📂 Файл: ${file.originalname} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
+      console.log('🔍 Читаю колонки...')
+      
       const columns = await parserService.readExcelColumns(file.path)
+      
+      console.log(`✅ Прочитано ${columns.columns.length} колонок, ${columns.rowCount} строк данных\n`)
       
       res.json(columns)
     } catch (error) {
-      console.error('Error reading columns:', error)
+      console.error('❌ Ошибка чтения колонок:', error)
       res.status(500).json({ 
         error: 'Failed to read columns',
         details: error instanceof Error ? error.message : 'Unknown error'
@@ -1102,33 +1128,51 @@ app.post('/api/bulk-import/columns',
 app.post('/api/bulk-import',
   upload.single('file'),
   async (req, res) => {
+    console.log('\n' + '='.repeat(70))
+    console.log('📥 ПОЛУЧЕН ЗАПРОС НА ИМПОРТ БОЛЬШИХ ДАННЫХ')
+    console.log('='.repeat(70))
+    
     try {
       const file = req.file
       const { mappings } = req.body
 
       if (!file) {
+        console.log('❌ Ошибка: файл не предоставлен')
         return res.status(400).json({ error: 'File is required' })
       }
 
+      console.log(`📂 Файл получен: ${file.originalname}`)
+      console.log(`📏 Размер: ${(file.size / 1024 / 1024).toFixed(2)} MB`)
+
       if (!mappings) {
+        console.log('❌ Ошибка: маппинг колонок не предоставлен')
         return res.status(400).json({ error: 'Column mappings are required' })
       }
 
       const columnMappings = JSON.parse(mappings)
+      console.log(`🔗 Получено маппингов: ${columnMappings.length}`)
       
-      await parserService.parseBulkFile(file.path, columnMappings)
+      // Используем потоковую версию для больших файлов
+      await parserService.parseBulkFileStreaming(file.path, columnMappings)
 
-      // Сохраняем БД
-      console.log('Сохранение данных в БД...')
-      databaseService.saveDatabase()
-      console.log('✅ Bulk импорт завершён успешно')
+      // Сохраняем БД с обработкой ошибок
+      console.log('💾 Финальное сохранение данных в БД...')
+      try {
+        databaseService.saveDatabase()
+        console.log('✅ БД сохранена успешно')
+      } catch (saveError) {
+        console.error('⚠️ Ошибка при финальном сохранении БД:', saveError)
+        console.log('⚠️ Данные остались в памяти, попробуйте перезапустить сервер для сохранения')
+      }
+      
+      console.log('✅ Bulk импорт завершён успешно\n')
 
       res.json({ 
         success: true,
         message: 'Bulk import completed successfully' 
       })
     } catch (error) {
-      console.error('Error during bulk import:', error)
+      console.error('❌ Ошибка во время bulk импорта:', error)
       
       res.status(500).json({ 
         error: 'Failed to import file',

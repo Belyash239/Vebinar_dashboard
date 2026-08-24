@@ -1,22 +1,32 @@
-import initSqlJs, { Database } from 'sql.js'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import Database from 'better-sqlite3'
+import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
 class DatabaseService {
-  private db: Database | null = null
+  private db: Database.Database | null = null
   private dbPath = join(process.cwd(), 'webinars.db')
 
   async init() {
-    const SQL = await initSqlJs()
+    // Инициализация better-sqlite3 (нативный SQLite)
+    this.db = new Database(this.dbPath, { 
+      verbose: undefined // можно включить console.log для отладки
+    })
     
-    // Загрузить существующую БД или создать новую
-    if (existsSync(this.dbPath)) {
-      const buffer = readFileSync(this.dbPath)
-      this.db = new SQL.Database(buffer)
-      await this.runMigrations()
-    } else {
-      this.db = new SQL.Database()
+    // Оптимизации для больших импортов
+    this.db.pragma('journal_mode = WAL') // Write-Ahead Logging для лучшей производительности
+    this.db.pragma('synchronous = NORMAL') // Баланс между скоростью и безопасностью
+    this.db.pragma('cache_size = -64000') // 64MB кэша
+    this.db.pragma('temp_store = MEMORY') // Временные таблицы в памяти
+    
+    // Проверяем, нужна ли инициализация схемы
+    const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+    
+    if (tables.length === 0) {
+      // База пустая - создаём схему
       await this.initDatabase()
+    } else {
+      // База существует - проверяем миграции
+      await this.runMigrations()
     }
   }
 
@@ -24,20 +34,18 @@ class DatabaseService {
     // Миграция: добавление utm_term и utm_custom
     try {
       // Проверяем существование колонок
-      const tableInfo = this.db!.exec(`PRAGMA table_info("Участники-Вебинары")`)
-      const columns = tableInfo[0]?.values.map((row: any) => row[1]) || []
+      const tableInfo = this.db!.prepare(`PRAGMA table_info("Участники-Вебинары")`).all()
+      const columns = tableInfo.map((row: any) => row.name)
       
       if (!columns.includes('utm_term')) {
         console.log('Добавление колонки utm_term...')
-        this.db!.exec(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_term TEXT`)
-        this.save()
+        this.db!.prepare(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_term TEXT`).run()
         console.log('✓ Колонка utm_term добавлена')
       }
       
       if (!columns.includes('utm_custom')) {
         console.log('Добавление колонки utm_custom...')
-        this.db!.exec(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_custom TEXT`)
-        this.save()
+        this.db!.prepare(`ALTER TABLE "Участники-Вебинары" ADD COLUMN utm_custom TEXT`).run()
         console.log('✓ Колонка utm_custom добавлена')
       }
     } catch (error) {
@@ -52,14 +60,17 @@ class DatabaseService {
     // Предзаполнение тегов
     const seedTags = readFileSync(join(process.cwd(), 'server', 'database', 'seed-tags.sql'), 'utf-8')
     this.db!.exec(seedTags)
-    
-    this.save()
   }
 
   private save() {
+    // better-sqlite3 автоматически записывает на диск при каждой транзакции
+    // Принудительное сохранение для WAL режима (запись WAL файла в основную БД)
     if (this.db) {
-      const data = this.db.export()
-      writeFileSync(this.dbPath, data)
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)')
+      } catch (error) {
+        console.error('⚠️ Ошибка при сохранении WAL:', error)
+      }
     }
   }
 
@@ -72,7 +83,7 @@ class DatabaseService {
     const db = this.db!
     
     // Общее количество посещений вебинаров (записи с присутствием >= 1 минуты)
-    const visitsResult = db.exec(`
+    const visitsResult = db.prepare(`
       SELECT COUNT(*) as count 
       FROM "Участники-Вебинары"
       WHERE (
@@ -80,13 +91,13 @@ class DatabaseService {
         CAST(SUBSTR(Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
         CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
       ) >= 1
-    `)
-    const totalWebinars = visitsResult[0]?.values[0]?.[0] as number || 0
+    `).get() as { count: number } | undefined
+    const totalWebinars = visitsResult?.count || 0
     
     // Среднее кол-во участников (которые были хотя бы 1 минуту)
     // Присутствие_относительно_длительности хранится как текст "HH:MM:SS"
     // Преобразуем в минуты: часы*60 + минуты + секунды/60
-    const avgParticipantsResult = db.exec(`
+    const avgParticipantsResult = db.prepare(`
       SELECT AVG(participant_count) as avg
       FROM (
         SELECT COUNT(DISTINCT ID_участника) as participant_count
@@ -98,12 +109,12 @@ class DatabaseService {
         ) >= 1
         GROUP BY ID_вебинара
       )
-    `)
-    const avgParticipants = avgParticipantsResult[0]?.values[0]?.[0] as number || 0
+    `).get() as { avg: number } | undefined
+    const avgParticipants = avgParticipantsResult?.avg || 0
     
     // Средняя конверсия (процент посетивших вебинар от всех зарегистрированных)
     // Посетивший = тот, кто был хотя бы 1 минуту
-    const conversionResult = db.exec(`
+    const conversionResult = db.prepare(`
       SELECT 
         COUNT(CASE WHEN (
           CAST(SUBSTR(Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
@@ -112,14 +123,14 @@ class DatabaseService {
         ) >= 1 THEN 1 END) * 100.0 / 
         NULLIF(COUNT(*), 0) as conversion
       FROM "Участники-Вебинары"
-    `)
-    const avgConversion = conversionResult[0]?.values[0]?.[0] as number || 0
+    `).get() as { conversion: number } | undefined
+    const avgConversion = conversionResult?.conversion || 0
     
     // Среднее удержание (средний процент присутствия от общей длительности)
     // Считаем только по тем, кто был хотя бы 1 минуту
     // Присутствие_от_общей_длительности хранится как текст "48,78%"
     // Преобразуем: убираем %, заменяем запятую на точку
-    const retentionResult = db.exec(`
+    const retentionResult = db.prepare(`
       SELECT AVG(
         CAST(REPLACE(REPLACE(Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL)
       ) as avg
@@ -130,19 +141,19 @@ class DatabaseService {
         CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
       ) >= 1
       AND Присутствие_от_общей_длительности IS NOT NULL
-    `)
-    const avgRetention = retentionResult[0]?.values[0]?.[0] as number || 0
+    `).get() as { avg: number } | undefined
+    const avgRetention = retentionResult?.avg || 0
     
     // Всего уникальных пользователей (участников)
-    const usersResult = db.exec('SELECT COUNT(DISTINCT ID_участника) as count FROM Участники')
-    const totalUsers = usersResult[0]?.values[0]?.[0] as number || 0
+    const usersResult = db.prepare('SELECT COUNT(DISTINCT ID_участника) as count FROM Участники').get() as { count: number } | undefined
+    const totalUsers = usersResult?.count || 0
     
     // Всего регистраций на вебинары
-    const registrationsResult = db.exec('SELECT COUNT(*) as count FROM "Участники-Вебинары"')
-    const totalRegistrations = registrationsResult[0]?.values[0]?.[0] as number || 0
+    const registrationsResult = db.prepare('SELECT COUNT(*) as count FROM "Участники-Вебинары"').get() as { count: number } | undefined
+    const totalRegistrations = registrationsResult?.count || 0
     
     // Наиболее популярный продукт (тег с наибольшим средним удержанием)
-    const popularProductResult = db.exec(`
+    const popularProductResult = db.prepare(`
       SELECT t.Название_тега as tag, 
              AVG(
                CAST(REPLACE(REPLACE(uw.Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL)
@@ -160,8 +171,8 @@ class DatabaseService {
       GROUP BY t.Название_тега
       ORDER BY avg_retention DESC
       LIMIT 1
-    `)
-    const popularProduct = popularProductResult[0]?.values[0]?.[0] as string || 'Нет данных'
+    `).get() as { tag: string } | undefined
+    const popularProduct = popularProductResult?.tag || 'Нет данных'
     
     // Среднее количество посещённых вебинаров на человека
     // = общее количество посещений / количество уникальных участников
@@ -184,15 +195,16 @@ class DatabaseService {
     const query = `
       SELECT 
         u.Имя || ' ' || u.Фамилия as name,
-        u.ИНН_компании as inn,
+        c.ИНН_компании as inn,
         e.Email as email,
         COUNT(DISTINCT uw.ID_вебинара) as webinarCount,
         COALESCE(SUM(uw.Кол_во_сообщений), 0) as messagesCount,
         COALESCE(SUM(uw.Кол_во_вопросов), 0) as questionsCount
       FROM Участники u
       INNER JOIN Email e ON u.ID_участника = e.ID_участника
+      LEFT JOIN Компания c ON u.ID_компании = c.ID_компании
       LEFT JOIN "Участники-Вебинары" uw ON u.ID_участника = uw.ID_участника
-      GROUP BY u.ID_участника, u.ИНН_компании, e.Email
+      GROUP BY u.ID_участника, c.ИНН_компании, e.Email
       ORDER BY webinarCount DESC
       LIMIT 50
     `
@@ -326,13 +338,8 @@ class DatabaseService {
       FROM Вебинары w
       WHERE w.ID_вебинара = ?
     `
-    const webinarResult = this.db!.exec(webinarQuery, [webinarId])
-    if (webinarResult.length === 0) return null
-    
-    const webinar: any = {}
-    webinarResult[0].columns.forEach((col, i) => {
-      webinar[col] = webinarResult[0].values[0][i]
-    })
+    const webinar = this.db!.prepare(webinarQuery).get(webinarId) as any
+    if (!webinar) return null
     
     // Получаем теги
     const tagsQuery = `
@@ -341,8 +348,8 @@ class DatabaseService {
       INNER JOIN Тег t ON wt.ID_тега = t.ID_тега
       WHERE wt.ID_мероприятия = ?
     `
-    const tagsResult = this.db!.exec(tagsQuery, [webinarId])
-    webinar.tags = tagsResult[0]?.values[0]?.[0] || null
+    const tagsResult = this.db!.prepare(tagsQuery).get(webinarId) as { tags: string } | undefined
+    webinar.tags = tagsResult?.tags || null
     
     // Получаем количество зарегистрированных (все записи в "Участники-Вебинары")
     const registeredQuery = `
@@ -350,8 +357,8 @@ class DatabaseService {
       FROM "Участники-Вебинары"
       WHERE ID_вебинара = ?
     `
-    const registeredResult = this.db!.exec(registeredQuery, [webinarId])
-    webinar.registeredCount = registeredResult[0]?.values[0]?.[0] || 0
+    const registeredResult = this.db!.prepare(registeredQuery).get(webinarId) as { count: number } | undefined
+    webinar.registeredCount = registeredResult?.count || 0
     
     // Получаем количество участников (>= 1 минуты)
     const participantQuery = `
@@ -364,8 +371,8 @@ class DatabaseService {
           CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
         ) >= 1
     `
-    const participantResult = this.db!.exec(participantQuery, [webinarId])
-    webinar.participantCount = participantResult[0]?.values[0]?.[0] || 0
+    const participantResult = this.db!.prepare(participantQuery).get(webinarId) as { count: number } | undefined
+    webinar.participantCount = participantResult?.count || 0
     
     // Получаем среднее удержание
     const retentionQuery = `
@@ -378,8 +385,8 @@ class DatabaseService {
           CAST(SUBSTR(Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
         ) >= 1
     `
-    const retentionResult = this.db!.exec(retentionQuery, [webinarId])
-    webinar.avgRetention = retentionResult[0]?.values[0]?.[0] || 0
+    const retentionResult = this.db!.prepare(retentionQuery).get(webinarId) as { avg: number } | undefined
+    webinar.avgRetention = retentionResult?.avg || 0
     
     // Получаем конверсию
     const conversionQuery = `
@@ -392,8 +399,8 @@ class DatabaseService {
       FROM "Участники-Вебинары"
       WHERE ID_вебинара = ?
     `
-    const conversionResult = this.db!.exec(conversionQuery, [webinarId])
-    webinar.conversion = Math.round((conversionResult[0]?.values[0]?.[0] as number) || 0)
+    const conversionResult = this.db!.prepare(conversionQuery).get(webinarId) as { conversion: number } | undefined
+    webinar.conversion = Math.round(conversionResult?.conversion || 0)
     
     return webinar
   }
@@ -589,19 +596,9 @@ class DatabaseService {
 
   // Вспомогательный метод для выполнения запросов
   private execQuery(query: string, params: any[] = []) {
-    const result = this.db!.exec(query, params)
-    if (result.length === 0) return []
-    
-    const columns = result[0].columns
-    const values = result[0].values
-    
-    return values.map(row => {
-      const obj: any = {}
-      columns.forEach((col, i) => {
-        obj[col] = row[i]
-      })
-      return obj
-    })
+    const stmt = this.db!.prepare(query)
+    const results = params.length > 0 ? stmt.all(...params) : stmt.all()
+    return results as any[]
   }
 
   // Публичный метод для экспорта данных
@@ -611,24 +608,17 @@ class DatabaseService {
 
   // Создать вебинар
   createWebinar(name: string, date: string) {
-    this.db!.run(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`, [name, date])
-    const result = this.db!.exec('SELECT last_insert_rowid() as id')
-    // Не сохраняем сразу, только в конце импорта
-    return result[0].values[0][0] as number
+    const stmt = this.db!.prepare(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`)
+    const info = stmt.run(name, date)
+    return info.lastInsertRowid as number
   }
 
   // Найти вебинар по названию
   findWebinarByName(name: string): number | null {
-    const result = this.db!.exec(
-      `SELECT ID_вебинара FROM Вебинары WHERE Название = ?`,
-      [name]
-    )
+    const stmt = this.db!.prepare(`SELECT ID_вебинара FROM Вебинары WHERE Название = ?`)
+    const result = stmt.get(name) as { ID_вебинара: number } | undefined
     
-    if (result.length > 0 && result[0].values.length > 0) {
-      return result[0].values[0][0] as number
-    }
-    
-    return null
+    return result ? result.ID_вебинара : null
   }
 
   // Создать или обновить вебинар
@@ -637,17 +627,14 @@ class DatabaseService {
     
     if (existingId) {
       // Обновляем дату существующего вебинара
-      this.db!.run(
-        `UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`,
-        [date, existingId]
-      )
+      this.db!.prepare(`UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`).run(date, existingId)
       console.log(`  ♻️ Обновлён существующий вебинар: "${name}" (ID: ${existingId})`)
       return existingId
     } else {
       // Создаём новый вебинар
-      this.db!.run(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`, [name, date])
-      const result = this.db!.exec('SELECT last_insert_rowid() as id')
-      const newId = result[0].values[0][0] as number
+      const stmt = this.db!.prepare(`INSERT INTO Вебинары (Название, Дата) VALUES (?, ?)`)
+      const info = stmt.run(name, date)
+      const newId = info.lastInsertRowid as number
       console.log(`  ✨ Создан новый вебинар: "${name}" (ID: ${newId})`)
       return newId
     }
@@ -655,8 +642,7 @@ class DatabaseService {
 
   // Обновить дату вебинара
   updateWebinarDate(webinarId: number, date: string) {
-    this.db!.run(`UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`, [date, webinarId])
-    // Не сохраняем сразу, только в конце импорта
+    this.db!.prepare(`UPDATE Вебинары SET Дата = ? WHERE ID_вебинара = ?`).run(date, webinarId)
   }
 
   // Добавить тег
@@ -679,30 +665,28 @@ class DatabaseService {
     console.log(`    🔎 Поисковое значение после нормализации: "${searchValue}"`)
     
     // Показываем все теги в БД для отладки
-    const allTags = this.db!.exec(`SELECT ID_тега, Название_тега FROM Тег`)
-    if (allTags.length > 0 && allTags[0].values.length > 0) {
-      console.log(`    📋 Всего тегов в БД: ${allTags[0].values.length}`)
-      allTags[0].values.slice(0, 5).forEach((row: any) => {
-        const dbTagNormalized = String(row[1]).toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ')
-        console.log(`       - "${row[1]}" (ID: ${row[0]}) → нормализовано: "${dbTagNormalized}"`)
+    const allTags = this.db!.prepare(`SELECT ID_тега, Название_тега FROM Тег`).all()
+    if (allTags.length > 0) {
+      console.log(`    📋 Всего тегов в БД: ${allTags.length}`)
+      allTags.slice(0, 5).forEach((row: any) => {
+        const dbTagNormalized = String(row.Название_тега).toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ')
+        console.log(`       - "${row.Название_тега}" (ID: ${row.ID_тега}) → нормализовано: "${dbTagNormalized}"`)
       })
-      if (allTags[0].values.length > 5) {
-        console.log(`       ... и ещё ${allTags[0].values.length - 5} тегов`)
+      if (allTags.length > 5) {
+        console.log(`       ... и ещё ${allTags.length - 5} тегов`)
       }
     }
     
     // Ищем тег без учета регистра и ё/е
-    const result = this.db!.exec(
+    const stmt = this.db!.prepare(
       `SELECT ID_тега, Название_тега FROM Тег 
-       WHERE LOWER(REPLACE(TRIM(Название_тега), 'ё', 'е')) = LOWER(REPLACE(TRIM(?), 'ё', 'е'))`,
-      [normalizedTagName]
+       WHERE LOWER(REPLACE(TRIM(Название_тега), 'ё', 'е')) = LOWER(REPLACE(TRIM(?), 'ё', 'е'))`
     )
+    const result = stmt.get(normalizedTagName) as { ID_тега: number, Название_тега: string } | undefined
     
-    if (result.length > 0 && result[0].values.length > 0) {
-      const tagId = result[0].values[0][0] as number
-      const actualName = result[0].values[0][1] as string
-      console.log(`    ✓ Найден: "${actualName}" (ID: ${tagId})`)
-      return tagId
+    if (result) {
+      console.log(`    ✓ Найден: "${result.Название_тега}" (ID: ${result.ID_тега})`)
+      return result.ID_тега
     }
     
     console.log(`    ✗ Не найден в БД`)
@@ -716,8 +700,7 @@ class DatabaseService {
 
   // Связать вебинар с тегом
   linkWebinarTag(webinarId: number, tagId: number) {
-    this.db!.run(`INSERT OR IGNORE INTO "Вебинары-Теги" (ID_мероприятия, ID_тега) VALUES (?, ?)`, [webinarId, tagId])
-    // Не сохраняем сразу
+    this.db!.prepare(`INSERT OR IGNORE INTO "Вебинары-Теги" (ID_мероприятия, ID_тега) VALUES (?, ?)`).run(webinarId, tagId)
   }
 
   // Получить список всех уникальных должностей
@@ -739,30 +722,29 @@ class DatabaseService {
   // Получить или создать компанию по ИНН
   getOrCreateCompany(inn: string, companyName?: string) {
     // Ищем компанию по ИНН
-    const result = this.db!.exec(`SELECT ID_компании FROM Компания WHERE ИНН_компании = ?`, [inn])
+    const stmt = this.db!.prepare(`SELECT ID_компании FROM Компания WHERE ИНН_компании = ?`)
+    const result = stmt.get(inn) as { ID_компании: number } | undefined
 
-    if (result.length > 0 && result[0].values.length > 0) {
-      return result[0].values[0][0] as number
+    if (result) {
+      return result.ID_компании
     }
 
     // Создаём новую компанию
-    this.db!.run(`INSERT INTO Компания (ИНН_компании, Название) VALUES (?, ?)`, [
-      inn, 
-      companyName || null
-    ])
-    const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-    return idResult[0].values[0][0] as number
+    const insertStmt = this.db!.prepare(`INSERT INTO Компания (ИНН_компании, Название) VALUES (?, ?)`)
+    const info = insertStmt.run(inn, companyName || null)
+    return info.lastInsertRowid as number
   }
 
   // Получить или создать участника
   // Получить или создать участника по email (email - уникальный идентификатор участника)
   getOrCreateParticipantByEmail(email: string, firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
     // Сначала проверяем, существует ли участник с таким email
-    const emailResult = this.db!.exec('SELECT ID_email, ID_участника FROM Email WHERE Email = ?', [email])
+    const emailStmt = this.db!.prepare('SELECT ID_email, ID_участника FROM Email WHERE Email = ?')
+    const emailResult = emailStmt.get(email) as { ID_email: number, ID_участника: number } | undefined
     
-    if (emailResult.length > 0 && emailResult[0].values.length > 0) {
+    if (emailResult) {
       // Email существует - обновляем данные существующего участника
-      const participantId = emailResult[0].values[0][1] as number
+      const participantId = emailResult.ID_участника
       
       // Определяем ID компании
       let companyId: number | null = null
@@ -771,18 +753,18 @@ class DatabaseService {
       }
       
       // Обновляем данные участника
-      this.db!.run(`
+      this.db!.prepare(`
         UPDATE Участники 
         SET ID_компании = ?, Имя = ?, Фамилия = ?, Номер_телефона = ?, Должность = ?
         WHERE ID_участника = ?
-      `, [
+      `).run(
         companyId,
         firstName || null,
         lastName || null,
         phone || null,
         position || null,
         participantId
-      ])
+      )
       
       return participantId
     }
@@ -794,21 +776,21 @@ class DatabaseService {
     }
     
     // Создаём участника
-    this.db!.run(`
+    const insertStmt = this.db!.prepare(`
       INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона, Должность) 
       VALUES (?, ?, ?, ?, ?)
-    `, [
+    `)
+    const info = insertStmt.run(
       companyId,
       firstName || null, 
       lastName || null,
       phone || null,
       position || null
-    ])
-    const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-    const participantId = idResult[0].values[0][0] as number
+    )
+    const participantId = info.lastInsertRowid as number
     
     // Создаём email и привязываем к участнику
-    this.db!.run('INSERT INTO Email (ID_участника, Email) VALUES (?, ?)', [participantId, email])
+    this.db!.prepare('INSERT INTO Email (ID_участника, Email) VALUES (?, ?)').run(participantId, email)
     
     return participantId
   }
@@ -822,35 +804,32 @@ class DatabaseService {
     }
     
     // Создаём нового участника
-    this.db!.run(`
+    const stmt = this.db!.prepare(`
       INSERT INTO Участники (ID_компании, Имя, Фамилия, Номер_телефона, Должность) 
       VALUES (?, ?, ?, ?, ?)
-    `, [
+    `)
+    const info = stmt.run(
       companyId,
       firstName || null, 
       lastName || null,
       phone || null,
       position || null
-    ])
-    const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-    return idResult[0].values[0][0] as number
+    )
+    return info.lastInsertRowid as number
   }
 
   // Получить или создать email
   getOrCreateEmail(email: string, participantId: number) {
-    const result = this.db!.exec(`SELECT ID_email FROM Email WHERE Email = ?`, [email || null])
+    const stmt = this.db!.prepare(`SELECT ID_email FROM Email WHERE Email = ?`)
+    const result = stmt.get(email || null) as { ID_email: number } | undefined
 
-    if (result.length === 0 || result[0].values.length === 0) {
-      this.db!.run(`INSERT INTO Email (Email, ID_участника) VALUES (?, ?)`, [
-        email || null, 
-        participantId
-      ])
-      const idResult = this.db!.exec('SELECT last_insert_rowid() as id')
-      // Не сохраняем сразу
-      return idResult[0].values[0][0] as number
+    if (!result) {
+      const insertStmt = this.db!.prepare(`INSERT INTO Email (Email, ID_участника) VALUES (?, ?)`)
+      const info = insertStmt.run(email || null, participantId)
+      return info.lastInsertRowid as number
     }
 
-    return result[0].values[0][0] as number
+    return result.ID_email
   }
 
   // Добавить связь участник-вебинар
@@ -884,7 +863,7 @@ class DatabaseService {
       emojiReactions: data.emojiReactions || 0
     }
 
-    this.db!.run(`
+    this.db!.prepare(`
       INSERT OR REPLACE INTO "Участники-Вебинары" (
         ID_участника, ID_вебинара, Имя_в_чате, Компания,
         Статус_регистрации, Дата_регистрации, Источники,
@@ -897,7 +876,7 @@ class DatabaseService {
         Кол_во_вопросов, Процент_от_общего_кол_ва_вопросов,
         Количество_поднятых_рук, Количество_отправленных_эмодзи_реакций
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
+    `).run(
       participantId, webinarId,
       cleanData.chatName, cleanData.company,
       cleanData.registrationStatus, cleanData.registrationDate, cleanData.sources,
@@ -909,30 +888,28 @@ class DatabaseService {
       cleanData.messagesCount, cleanData.messagesPercent,
       cleanData.questionsCount, cleanData.questionsPercent,
       cleanData.handsRaised, cleanData.emojiReactions
-    ])
-    // Не сохраняем сразу
+    )
   }
 
   // Добавить сообщение чата
   addChatMessage(webinarId: number, emailId: number, time: string, message: string) {
-    this.db!.run(`INSERT INTO Чат (ID_вебинара, ID_email, Время, Сообщение_чата) VALUES (?, ?, ?, ?)`, [
+    this.db!.prepare(`INSERT INTO Чат (ID_вебинара, ID_email, Время, Сообщение_чата) VALUES (?, ?, ?, ?)`).run(
       webinarId, 
       emailId, 
       time || null, 
       message || null
-    ])
-    // Не сохраняем сразу
+    )
   }
 
   // Добавить вопрос
   addQuestion(webinarId: number, emailId: number, data: any) {
-    this.db!.run(`
+    this.db!.prepare(`
       INSERT INTO Вопросы (
         ID_вебинара, ID_email, Автор_вопроса, Вопрос,
         Статус_вопроса, Отвечающий, Почта_отвечающего,
         Ответы_и_комментарии, Время_ответа
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
+    `).run(
       webinarId, 
       emailId, 
       data.author || null, 
@@ -942,55 +919,54 @@ class DatabaseService {
       data.responderEmail || null,
       data.answers || null, 
       data.answerTime || null
-    ])
-    // Не сохраняем сразу
+    )
   }
 
   // Удалить вебинар (откат при ошибке)
   deleteWebinar(webinarId: number) {
     // Получаем ID опросов, связанных с этим вебинаром
-    const surveyIds = this.db!.exec(`
+    const surveyIds = this.db!.prepare(`
       SELECT DISTINCT ID_опроса 
       FROM "Вебинары-Опросы" 
       WHERE ID_вебинара = ?
-    `, [webinarId])
+    `).all(webinarId) as { ID_опроса: number }[]
 
     // Удаляем в порядке зависимостей
-    this.db!.run('DELETE FROM Чат WHERE ID_вебинара = ?', [webinarId])
-    this.db!.run('DELETE FROM Вопросы WHERE ID_вебинара = ?', [webinarId])
-    this.db!.run('DELETE FROM "Участники-Вебинары" WHERE ID_вебинара = ?', [webinarId])
-    this.db!.run('DELETE FROM "Вебинары-Теги" WHERE ID_мероприятия = ?', [webinarId])
+    this.db!.prepare('DELETE FROM Чат WHERE ID_вебинара = ?').run(webinarId)
+    this.db!.prepare('DELETE FROM Вопросы WHERE ID_вебинара = ?').run(webinarId)
+    this.db!.prepare('DELETE FROM "Участники-Вебинары" WHERE ID_вебинара = ?').run(webinarId)
+    this.db!.prepare('DELETE FROM "Вебинары-Теги" WHERE ID_мероприятия = ?').run(webinarId)
     
     // Удаляем ответы на опросы, связанные с этим вебинаром
-    if (surveyIds.length > 0 && surveyIds[0].values.length > 0) {
-      for (const row of surveyIds[0].values) {
-        const surveyId = row[0] as number
+    if (surveyIds.length > 0) {
+      for (const row of surveyIds) {
+        const surveyId = row.ID_опроса
         
         // Получаем ID вопросов этого опроса
-        const questionIds = this.db!.exec(`
+        const questionIds = this.db!.prepare(`
           SELECT ID_вопроса 
           FROM Опросы 
           WHERE ID_опроса = ?
-        `, [surveyId])
+        `).all(surveyId) as { ID_вопроса: number }[]
         
         // Удаляем ответы для каждого вопроса
-        if (questionIds.length > 0 && questionIds[0].values.length > 0) {
-          for (const qRow of questionIds[0].values) {
-            const questionId = qRow[0] as number
-            this.db!.run('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?', [questionId])
+        if (questionIds.length > 0) {
+          for (const qRow of questionIds) {
+            const questionId = qRow.ID_вопроса
+            this.db!.prepare('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?').run(questionId)
           }
         }
         
         // Удаляем вопросы опроса
-        this.db!.run('DELETE FROM Опросы WHERE ID_опроса = ?', [surveyId])
+        this.db!.prepare('DELETE FROM Опросы WHERE ID_опроса = ?').run(surveyId)
       }
     }
     
     // Удаляем связь вебинар-опрос
-    this.db!.run('DELETE FROM "Вебинары-Опросы" WHERE ID_вебинара = ?', [webinarId])
+    this.db!.prepare('DELETE FROM "Вебинары-Опросы" WHERE ID_вебинара = ?').run(webinarId)
     
     // Удаляем сам вебинар
-    this.db!.run('DELETE FROM Вебинары WHERE ID_вебинара = ?', [webinarId])
+    this.db!.prepare('DELETE FROM Вебинары WHERE ID_вебинара = ?').run(webinarId)
     
     // Удалить участников, которые больше не связаны ни с одним вебинаром
     this.cleanupOrphanedParticipants()
@@ -1001,47 +977,47 @@ class DatabaseService {
   // Очистить участников без вебинаров
   private cleanupOrphanedParticipants() {
     // Найти ID участников, которые не связаны ни с одним вебинаром
-    const orphanedParticipants = this.db!.exec(`
+    const orphanedParticipants = this.db!.prepare(`
       SELECT ID_участника 
       FROM Участники 
       WHERE ID_участника NOT IN (
         SELECT DISTINCT ID_участника FROM "Участники-Вебинары"
       )
-    `)
+    `).all() as { ID_участника: number }[]
 
-    if (orphanedParticipants.length > 0 && orphanedParticipants[0].values.length > 0) {
-      const orphanedIds = orphanedParticipants[0].values.map(row => row[0])
+    if (orphanedParticipants.length > 0) {
+      const orphanedIds = orphanedParticipants.map(row => row.ID_участника)
       
       console.log(`🗑️ Удаление ${orphanedIds.length} участников без вебинаров`)
       
       // Удаляем email для этих участников
       for (const participantId of orphanedIds) {
-        this.db!.run('DELETE FROM Email WHERE ID_участника = ?', [participantId])
+        this.db!.prepare('DELETE FROM Email WHERE ID_участника = ?').run(participantId)
       }
       
       // Удаляем самих участников
       for (const participantId of orphanedIds) {
-        this.db!.run('DELETE FROM Участники WHERE ID_участника = ?', [participantId])
+        this.db!.prepare('DELETE FROM Участники WHERE ID_участника = ?').run(participantId)
       }
     }
 
     // Найти ID компаний, которые не связаны ни с одним участником
-    const orphanedCompanies = this.db!.exec(`
+    const orphanedCompanies = this.db!.prepare(`
       SELECT ID_компании 
       FROM Компания 
       WHERE ID_компании NOT IN (
         SELECT DISTINCT ID_компании FROM Участники WHERE ID_компании IS NOT NULL
       )
-    `)
+    `).all() as { ID_компании: number }[]
 
-    if (orphanedCompanies.length > 0 && orphanedCompanies[0].values.length > 0) {
-      const orphanedCompanyIds = orphanedCompanies[0].values.map(row => row[0])
+    if (orphanedCompanies.length > 0) {
+      const orphanedCompanyIds = orphanedCompanies.map(row => row.ID_компании)
       
       console.log(`🗑️ Удаление ${orphanedCompanyIds.length} компаний без участников`)
       
       // Удаляем компании
       for (const companyId of orphanedCompanyIds) {
-        this.db!.run('DELETE FROM Компания WHERE ID_компании = ?', [companyId])
+        this.db!.prepare('DELETE FROM Компания WHERE ID_компании = ?').run(companyId)
       }
     }
   }
@@ -1294,43 +1270,42 @@ class DatabaseService {
   // Добавить вопрос опроса и связать с вебинаром и email
   addSurveyQuestion(surveyId: number, question: string, webinarId: number | null, emailId: number, answer: string | null) {
     // Проверяем, существует ли уже этот вопрос для данного опроса
-    const existingQuestion = this.db!.exec(`
-      SELECT ID_вопроса FROM Опросы WHERE ID_опроса = ? AND Вопрос = ?
-    `, [surveyId, question])
+    const stmt = this.db!.prepare(`SELECT ID_вопроса FROM Опросы WHERE ID_опроса = ? AND Вопрос = ?`)
+    const existingQuestion = stmt.get(surveyId, question) as { ID_вопроса: number } | undefined
 
     let questionId: number
 
-    if (existingQuestion.length > 0 && existingQuestion[0].values.length > 0) {
+    if (existingQuestion) {
       // Вопрос уже существует
-      questionId = existingQuestion[0].values[0][0] as number
+      questionId = existingQuestion.ID_вопроса
     } else {
       // Создаём новый вопрос
-      this.db!.run(`INSERT INTO Опросы (ID_опроса, Вопрос) VALUES (?, ?)`, [surveyId, question])
-      const result = this.db!.exec('SELECT last_insert_rowid() as id')
-      questionId = result[0].values[0][0] as number
+      const insertStmt = this.db!.prepare(`INSERT INTO Опросы (ID_опроса, Вопрос) VALUES (?, ?)`)
+      const info = insertStmt.run(surveyId, question)
+      questionId = info.lastInsertRowid as number
     }
 
     // Связываем вебинар с опросом (если ещё не связан и webinarId указан)
     if (webinarId !== null) {
-      this.db!.run(`INSERT OR IGNORE INTO "Вебинары-Опросы" (ID_вебинара, ID_опроса) VALUES (?, ?)`, [
+      this.db!.prepare(`INSERT OR IGNORE INTO "Вебинары-Опросы" (ID_вебинара, ID_опроса) VALUES (?, ?)`).run(
         webinarId, 
         surveyId
-      ])
+      )
     }
 
     // Добавляем ответ участника
     if (answer) {
-      this.db!.run(`INSERT OR REPLACE INTO "Опросы-Email" (ID_вопроса, ID_email, Ответ) VALUES (?, ?, ?)`, [
+      this.db!.prepare(`INSERT OR REPLACE INTO "Опросы-Email" (ID_вопроса, ID_email, Ответ) VALUES (?, ?, ?)`).run(
         questionId, 
         emailId, 
         answer
-      ])
+      )
     }
   }
 
   // Обновить должность участника
   updateParticipantPosition(participantId: number, position: string) {
-    this.db!.run(`UPDATE Участники SET Должность = ? WHERE ID_участника = ?`, [position, participantId])
+    this.db!.prepare(`UPDATE Участники SET Должность = ? WHERE ID_участника = ?`).run(position, participantId)
   }
 
   // Получить чат участника
@@ -1585,37 +1560,37 @@ class DatabaseService {
   // Удалить опрос
   deleteSurvey(surveyId: number) {
     // Получаем ID вопросов этого опроса
-    const questionIds = this.db!.exec(`
+    const questionIds = this.db!.prepare(`
       SELECT ID_вопроса 
       FROM Опросы 
       WHERE ID_опроса = ?
-    `, [surveyId])
+    `).all(surveyId) as { ID_вопроса: number }[]
     
     // Удаляем ответы для каждого вопроса
-    if (questionIds.length > 0 && questionIds[0].values.length > 0) {
-      for (const row of questionIds[0].values) {
-        const questionId = row[0] as number
-        this.db!.run('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?', [questionId])
+    if (questionIds.length > 0) {
+      for (const row of questionIds) {
+        const questionId = row.ID_вопроса
+        this.db!.prepare('DELETE FROM "Опросы-Email" WHERE ID_вопроса = ?').run(questionId)
       }
     }
     
     // Удаляем вопросы опроса
-    this.db!.run('DELETE FROM Опросы WHERE ID_опроса = ?', [surveyId])
+    this.db!.prepare('DELETE FROM Опросы WHERE ID_опроса = ?').run(surveyId)
     
     // Удаляем связь вебинар-опрос
-    this.db!.run('DELETE FROM "Вебинары-Опросы" WHERE ID_опроса = ?', [surveyId])
+    this.db!.prepare('DELETE FROM "Вебинары-Опросы" WHERE ID_опроса = ?').run(surveyId)
     
     this.save()
   }
 
     // Получить следующий доступный ID опроса
     getNextSurveyId(): number {
-      const result = this.db!.exec(`
+      const result = this.db!.prepare(`
         SELECT COALESCE(MAX(ID_опроса), 0) + 1 as next_id FROM Опросы
-      `)
+      `).get() as { next_id: number } | undefined
 
-      if (result.length > 0 && result[0].values.length > 0) {
-        return result[0].values[0][0] as number
+      if (result) {
+        return result.next_id
       }
 
       return 1
