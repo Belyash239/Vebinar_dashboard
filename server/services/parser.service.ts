@@ -2053,42 +2053,83 @@ class ParserService {
             continue
           }
 
-          // УЛУЧШЕННАЯ валидация ИНН с поддержкой дубликатов колонок
-          // Ищем первый непустой валидный ИНН из всех возможных колонок
-          let innValue = null
+          // УЛУЧШЕННАЯ валидация ИНН с поддержкой множественных колонок
+          // Собираем все маппинги для ИНН_компании и ИНН
+          const innMappings: Array<{ excelColumn: string, dbField: string }> = []
           
-          // Проверяем ИНН_компании (приоритет 1)
-          if (mappedData['ИНН_компании']) {
-            innValue = mappedData['ИНН_компании']
+          // Сначала добавляем все ИНН_компании (приоритет выше)
+          mappings.forEach(m => {
+            if (m.dbField === 'ИНН_компании' && m.excelColumn) {
+              innMappings.push(m)
+            }
+          })
+          
+          // Затем добавляем все ИНН (приоритет ниже)
+          mappings.forEach(m => {
+            if (m.dbField === 'ИНН' && m.excelColumn) {
+              innMappings.push(m)
+            }
+          })
+          
+          if (debugRowCount <= 3) {
+            console.log(`\n🔍 Обработка ИНН для записи ${debugRowCount}:`)
+            console.log(`  Найдено маппингов ИНН: ${innMappings.length}`)
+            innMappings.forEach((m, i) => {
+              console.log(`    ${i + 1}. Excel колонка: "${m.excelColumn}" → DB поле: "${m.dbField}"`)
+              console.log(`       Значение: "${rowData[m.excelColumn]}"`)
+            })
           }
           
-          // Если нет, проверяем ИНН (приоритет 2)
-          if ((!innValue || String(innValue).trim() === '') && mappedData['ИНН']) {
-            innValue = mappedData['ИНН']
-          }
-
           let innStr = ''
           let hasValidInn = false
-
-          if (innValue && String(innValue).trim() !== '') {
-            innStr = String(innValue).trim()
+          let innSourceColumn = ''
+          
+          // Проходим по всем колонкам ИНН по порядку приоритета
+          for (const innMapping of innMappings) {
+            const excelColumn = innMapping.excelColumn
+            const innValue = rowData[excelColumn]  // Читаем из rowData по имени колонки Excel
             
-            // Удаляем нечисловые символы если есть
-            innStr = innStr.replace(/[^\d]/g, '')
-            if (/^\d{10}$|^\d{12}$/.test(innStr)) {
-              hasValidInn = true
-            } else {
-              if (skippedInnCount < 5) {
-                console.log(`  ⚠️ Некорректный ИНН: "${innValue}"`)
-              }
-              skippedInnCount++
-              innStr = ''
+            if (debugRowCount <= 3) {
+              console.log(`  Проверка колонки "${excelColumn}": значение = "${innValue}"`)
             }
-          } else {
+            
+            if (innValue && String(innValue).trim() !== '') {
+              let testInn = String(innValue).trim()
+              
+              if (debugRowCount <= 3) {
+                console.log(`    После trim: "${testInn}"`)
+              }
+              
+              // Удаляем нечисловые символы если есть
+              testInn = testInn.replace(/[^\d]/g, '')
+              
+              if (debugRowCount <= 3) {
+                console.log(`    После очистки: "${testInn}"`)
+                console.log(`    Проверка регулярки /^\\d{10}$|^\\d{12}$/: ${/^\d{10}$|^\d{12}$/.test(testInn)}`)
+              }
+              
+              if (/^\d{10}$|^\d{12}$/.test(testInn)) {
+                // Нашли валидный ИНН!
+                innStr = testInn
+                hasValidInn = true
+                innSourceColumn = excelColumn
+                
+                if (debugRowCount <= 3) {
+                  console.log(`    ✅ ВАЛИДНЫЙ ИНН найден!`)
+                }
+                break  // Прекращаем поиск
+              }
+            }
+          }
+          
+          if (!hasValidInn) {
+            // Не нашли валидный ИНН ни в одной колонке
             if (skippedInnCount < 5) {
-              console.log(`  ⚠️ Нет ИНН для Email=${mappedData['Email']}`)
+              console.log(`  ⚠️ Нет валидного ИНН для Email=${mappedData['Email']} (проверено колонок: ${innMappings.length})`)
             }
             skippedInnCount++
+          } else if (debugRowCount <= 3) {
+            console.log(`  ✓ ИНН найден: "${innStr}" из колонки "${innSourceColumn}"`)
           }
 
           // Обработка вебинара с ограничением на создание новых

@@ -104,6 +104,8 @@ const tagOptions = ref<{ name: string; checked: boolean }[]>([])
 const isLoading = ref(false)
 const isLoadingUsers = ref(false)
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
+const selectedYear = ref<string>('all') // Выбранный год для фильтрации графика
+const availableYears = ref<string[]>([]) // Доступные года из данных
 let chartInstance: Chart | null = null
 
 const toggleAllChartDatasets = () => {
@@ -326,6 +328,10 @@ const formatDate = (dateStr: string) => {
   })
 }
 
+const renderChart = () => {
+  createChart()
+}
+
 const createChart = () => {
   if (!chartCanvas.value || timelineData.value.length === 0) return
 
@@ -345,34 +351,74 @@ const createChart = () => {
   } = {}
   
   const allProducts = new Set<string>()
+  const yearsSet = new Set<string>()
 
-  // Один проход для парсинга агрегированных данных
+  // ПЕРВЫЙ ПРОХОД: собираем все доступные года
   timelineData.value.forEach(item => {
-    const currentMonth = new Date(item.date).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })
+    const date = new Date(item.date)
+    const year = date.getFullYear().toString()
+    yearsSet.add(year)
+  })
+  
+  // Обновляем список доступных годов
+  availableYears.value = Array.from(yearsSet).sort((a, b) => parseInt(b) - parseInt(a))
+
+  // ВТОРОЙ ПРОХОД: парсим ВСЕ данные для накопления участников
+  // Сначала собираем всех участников до выбранного года для начального накопленного значения
+  const allSeenParticipantsByProduct: { [product: string]: Set<number> } = {}
+  const allSeenParticipants = new Set<number>()
+  
+  // Сортируем данные по дате для правильного накопления
+  const sortedTimelineData = [...timelineData.value].sort((a, b) => 
+    new Date(a.date).getTime() - new Date(b.date).getTime()
+  )
+  
+  sortedTimelineData.forEach(item => {
+    const date = new Date(item.date)
+    const year = date.getFullYear().toString()
+    const currentMonth = date.toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })
     
     allProducts.add(item.product)
     
-    if (!monthGroups[currentMonth]) {
-      monthGroups[currentMonth] = {}
-    }
-    
-    if (!monthGroups[currentMonth][item.product]) {
-      monthGroups[currentMonth][item.product] = {
-        participants: new Set(),
-        firstTimers: new Set()
-      }
+    // Инициализируем Set для продукта если нужно
+    if (!allSeenParticipantsByProduct[item.product]) {
+      allSeenParticipantsByProduct[item.product] = new Set()
     }
     
     // Парсим ID участников из строки
+    let participantIds: number[] = []
     if (item.participantIds) {
-      const ids = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
-      ids.forEach(id => monthGroups[currentMonth][item.product].participants.add(id))
+      participantIds = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
     }
     
     // Парсим ID новых участников
+    let newParticipantIds: number[] = []
     if (item.newParticipantIds) {
-      const newIds = item.newParticipantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
-      newIds.forEach(id => monthGroups[currentMonth][item.product].firstTimers.add(id))
+      newParticipantIds = item.newParticipantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+    }
+    
+    // Добавляем всех участников в глобальные накопители
+    participantIds.forEach(id => {
+      allSeenParticipantsByProduct[item.product].add(id)
+      allSeenParticipants.add(id)
+    })
+    
+    // Если этот месяц входит в выбранный год (или выбраны все года), добавляем в monthGroups
+    if (selectedYear.value === 'all' || year === selectedYear.value) {
+      if (!monthGroups[currentMonth]) {
+        monthGroups[currentMonth] = {}
+      }
+      
+      if (!monthGroups[currentMonth][item.product]) {
+        monthGroups[currentMonth][item.product] = {
+          participants: new Set(),
+          firstTimers: new Set()
+        }
+      }
+      
+      // Добавляем участников в группу месяца
+      participantIds.forEach(id => monthGroups[currentMonth][item.product].participants.add(id))
+      newParticipantIds.forEach(id => monthGroups[currentMonth][item.product].firstTimers.add(id))
     }
   })
 
@@ -402,22 +448,62 @@ const createChart = () => {
       newParticipants: []
     }
     
-    const seenParticipants = new Set<number>()
-    let previousTotal = 0
+    // Начинаем с участников, которые были до первого отображаемого месяца
+    const seenParticipants = new Set<number>(allSeenParticipantsByProduct[product] || [])
+    let previousTotal = seenParticipants.size
+    
+    // Если выбран конкретный год, нужно вычислить начальное накопленное значение
+    if (selectedYear.value !== 'all' && sortedMonths.length > 0) {
+      // Находим дату первого отображаемого месяца
+      const firstDisplayedMonth = sortedMonths[0]
+      const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+      const [monthName, yearStr] = firstDisplayedMonth.split(' ')
+      const firstMonthIndex = months.findIndex(m => monthName.startsWith(m))
+      const firstMonthDate = new Date(parseInt(yearStr), firstMonthIndex, 1)
+      
+      // Считаем всех участников до этой даты
+      const participantsBeforeFirstMonth = new Set<number>()
+      sortedTimelineData.forEach(item => {
+        if (item.product === product && new Date(item.date) < firstMonthDate) {
+          if (item.participantIds) {
+            const ids = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+            ids.forEach(id => participantsBeforeFirstMonth.add(id))
+          }
+        }
+      })
+      
+      previousTotal = participantsBeforeFirstMonth.size
+    } else {
+      previousTotal = 0
+    }
     
     sortedMonths.forEach(month => {
       const monthData = monthGroups[month][product]
       
       if (monthData) {
-        // Добавляем всех участников этого месяца в накопленные
-        monthData.participants.forEach(p => seenParticipants.add(p))
+        // Пересчитываем накопленных участников с учётом всех предыдущих
+        const seenInThisMonth = new Set<number>()
         
-        const totalAccumulated = seenParticipants.size
+        // Собираем всех участников до этого месяца включительно
+        const [currentMonthName, currentYear] = month.split(' ')
+        const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+        const currentMonthIndex = months.findIndex(m => currentMonthName.startsWith(m))
+        const currentMonthDate = new Date(parseInt(currentYear), currentMonthIndex + 1, 0) // Последний день месяца
+        
+        sortedTimelineData.forEach(item => {
+          if (item.product === product && new Date(item.date) <= currentMonthDate) {
+            if (item.participantIds) {
+              const ids = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+              ids.forEach(id => seenInThisMonth.add(id))
+            }
+          }
+        })
+        
+        const totalAccumulated = seenInThisMonth.size
         const newCount = monthData.firstTimers.size
         
         // Накопленная часть = всего накоплено минус новые текущего месяца
-        // Но не меньше предыдущего накопленного значения
-        const accumulatedOnly = Math.max(previousTotal, totalAccumulated - newCount)
+        const accumulatedOnly = Math.max(0, totalAccumulated - newCount)
         
         cumulativeData[product].accumulated.push(accumulatedOnly)
         cumulativeData[product].newParticipants.push(newCount)
@@ -481,35 +567,41 @@ const createChart = () => {
   const allParticipantsByMonth: number[] = []
   const allAccumulatedByMonth: number[] = []
   const allNewByMonth: number[] = []
-  const seenAllParticipants = new Set<number>()
-  let previousTotalAll = 0
   
   sortedMonths.forEach(month => {
     const monthData = monthGroups[month]
-    const monthNewParticipants = new Set<number>()
     
+    // Вычисляем общее количество участников до этого месяца включительно
+    const [currentMonthName, currentYear] = month.split(' ')
+    const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+    const currentMonthIndex = months.findIndex(m => currentMonthName.startsWith(m))
+    const currentMonthDate = new Date(parseInt(currentYear), currentMonthIndex + 1, 0) // Последний день месяца
+    
+    const seenAllUpToThisMonth = new Set<number>()
+    sortedTimelineData.forEach(item => {
+      if (new Date(item.date) <= currentMonthDate) {
+        if (item.participantIds) {
+          const ids = item.participantIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0)
+          ids.forEach(id => seenAllUpToThisMonth.add(id))
+        }
+      }
+    })
+    
+    // Новые участники этого месяца
+    const monthNewParticipants = new Set<number>()
     if (monthData) {
-      // Собираем всех участников этого месяца по всем продуктам
       Object.values(monthData).forEach(productData => {
-        productData.participants.forEach(p => {
-          // Если участник новый (не был ранее), добавляем в новые
-          if (!seenAllParticipants.has(p)) {
-            monthNewParticipants.add(p)
-          }
-          seenAllParticipants.add(p)
-        })
+        productData.firstTimers.forEach(id => monthNewParticipants.add(id))
       })
     }
     
-    const total = seenAllParticipants.size
+    const total = seenAllUpToThisMonth.size
     const newCount = monthNewParticipants.size
     const accumulatedOnly = total - newCount
     
     allParticipantsByMonth.push(total)
     allNewByMonth.push(newCount)
-    allAccumulatedByMonth.push(accumulatedOnly)
-    
-    previousTotalAll = total
+    allAccumulatedByMonth.push(Math.max(0, accumulatedOnly))
   })
 
   datasets.push({
@@ -667,7 +759,7 @@ const loadData = async () => {
   
   // Создаём график после загрузки данных
   await nextTick()
-  createChart()
+  renderChart()
 }
 
 onMounted(() => {
@@ -844,12 +936,29 @@ onMounted(() => {
         <section class="mb-8">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-semibold text-gray-900">Динамика посещений по времени (уникальных)</h2>
-            <button
-              @click="toggleAllChartDatasets"
-              class="px-3 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-              Показать всё / Скрыть всё
-            </button>
+            <div class="flex items-center gap-3">
+              <!-- Выбор года -->
+              <div class="flex items-center gap-2">
+                <label class="text-sm text-gray-600">Год:</label>
+                <select
+                  v-model="selectedYear"
+                  @change="renderChart()"
+                  class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">Все года</option>
+                  <option v-for="year in availableYears" :key="year" :value="year">
+                    {{ year }}
+                  </option>
+                </select>
+              </div>
+              
+              <button
+                @click="toggleAllChartDatasets"
+                class="px-3 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+              >
+                Показать всё / Скрыть всё
+              </button>
+            </div>
           </div>
           <div class="bg-white rounded-lg shadow p-6">
             <div v-if="timelineData.length === 0" class="text-center py-12 text-gray-500">

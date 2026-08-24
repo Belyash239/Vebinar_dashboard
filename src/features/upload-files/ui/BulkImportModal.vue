@@ -584,6 +584,19 @@ const mappedFieldsCount = computed(() => {
             </div>
           </div>
 
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div class="flex gap-3">
+              <svg class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="text-sm text-blue-800">
+                <p class="font-medium mb-1">💡 Совет по ИНН:</p>
+                <p>Вы можете выбрать <strong>несколько колонок</strong> для поля "ИНН компании" или "ИНН". Система автоматически проверит их по порядку и использует первый валидный ИНН (10 или 12 цифр).</p>
+                <p class="mt-2 text-xs">Например: "ИНН компании" → ИНН_компании, "ИНН Организации" → ИНН_компании, "ИНН" → ИНН</p>
+              </div>
+            </div>
+          </div>
+
           <div>
             <h3 class="text-lg font-medium text-gray-900 mb-4">Настройка соответствия полей</h3>
             <p class="text-sm text-gray-600 mb-4">
