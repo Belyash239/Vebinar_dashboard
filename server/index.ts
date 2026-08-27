@@ -1,9 +1,13 @@
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
+import * as dotenv from 'dotenv'
 import databaseService from './database/database.service.js'
 import parserService from './services/parser.service.js'
 import exportService from './services/export.service.js'
+
+// Загружаем переменные окружения
+dotenv.config()
 
 const app = express()
 const PORT = 3000
@@ -1181,6 +1185,160 @@ app.post('/api/bulk-import',
     }
   }
 )
+
+// Endpoint для обогащения данных компании из DaData по ИНН
+app.post('/api/enrich-company/:inn', async (req, res) => {
+  try {
+    const { inn } = req.params
+    
+    if (!inn) {
+      return res.status(400).json({ error: 'ИНН не указан' })
+    }
+
+    console.log(`🔍 Запрос обогащения данных для ИНН: ${inn}`)
+
+    const { dadataService } = await import('./services/dadata.service')
+    const companyData = await dadataService.getCompanyByInn(inn)
+
+    if (!companyData) {
+      return res.status(404).json({ error: 'Компания не найдена в DaData' })
+    }
+
+    // Обновляем данные в БД
+    databaseService.updateCompanyFromDaData(inn, {
+      name: companyData.name,
+      kpp: companyData.kpp,
+      ogrn: companyData.ogrn,
+      mainOkved: companyData.mainOkved,
+      additionalOkveds: companyData.additionalOkveds,
+      branchType: companyData.branchType,
+      organizationType: companyData.organizationType,
+      opf: companyData.opf,
+      taxSystem: companyData.taxSystem,
+      status: companyData.status,
+      income: companyData.income,
+      expense: companyData.expense
+    })
+
+    databaseService.saveDatabase()
+
+    console.log(`✅ Данные компании ${inn} обновлены`)
+
+    res.json({ 
+      success: true, 
+      data: companyData 
+    })
+  } catch (error) {
+    console.error('❌ Ошибка при обогащении данных компании:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при обогащении данных',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
+
+// Endpoint для пакетного обогащения компаний
+app.post('/api/enrich-companies-batch', async (req, res) => {
+  try {
+    const { limit = 100 } = req.body
+
+    console.log(`📦 Запуск пакетного обогащения компаний (лимит: ${limit})`)
+
+    // Получаем список компаний, которым нужно обновление
+    const innsToUpdate = databaseService.getCompaniesNeedingDaDataUpdate(limit)
+
+    if (innsToUpdate.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'Все компании уже обновлены',
+        updated: 0,
+        total: 0
+      })
+    }
+
+    console.log(`🔄 Найдено компаний для обновления: ${innsToUpdate.length}`)
+
+    const { dadataService } = await import('./services/dadata.service')
+    let updatedCount = 0
+
+    for (const inn of innsToUpdate) {
+      const companyData = await dadataService.getCompanyByInn(inn)
+      
+      if (companyData) {
+        databaseService.updateCompanyFromDaData(inn, {
+          name: companyData.name,
+          kpp: companyData.kpp,
+          ogrn: companyData.ogrn,
+          mainOkved: companyData.mainOkved,
+          additionalOkveds: companyData.additionalOkveds,
+          branchType: companyData.branchType,
+          organizationType: companyData.organizationType,
+          opf: companyData.opf,
+          taxSystem: companyData.taxSystem,
+          status: companyData.status,
+          income: companyData.income,
+          expense: companyData.expense
+        })
+        updatedCount++
+      }
+
+      // Задержка между запросами
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+
+    databaseService.saveDatabase()
+
+    console.log(`✅ Обновлено компаний: ${updatedCount} из ${innsToUpdate.length}`)
+
+    res.json({ 
+      success: true, 
+      message: `Обновлено ${updatedCount} компаний`,
+      updated: updatedCount,
+      total: innsToUpdate.length
+    })
+  } catch (error) {
+    console.error('❌ Ошибка при пакетном обогащении:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при пакетном обогащении',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
+
+// Endpoint для получения статистики по обогащению компаний
+app.get('/api/companies-enrichment-stats', (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN Дата_обновления_DaData IS NOT NULL THEN 1 ELSE 0 END) as enriched,
+        SUM(CASE WHEN Дата_обновления_DaData IS NULL THEN 1 ELSE 0 END) as notEnriched,
+        SUM(CASE 
+          WHEN Дата_обновления_DaData IS NOT NULL 
+            AND datetime(Дата_обновления_DaData) < datetime('now', '-30 days') 
+          THEN 1 
+          ELSE 0 
+        END) as outdated
+      FROM Компания
+    `
+    
+    const stats = databaseService.execQueryForExport(query)[0]
+    
+    res.json({
+      total: stats.total,
+      enriched: stats.enriched,
+      notEnriched: stats.notEnriched,
+      outdated: stats.outdated,
+      needsUpdate: stats.notEnriched + stats.outdated
+    })
+  } catch (error) {
+    console.error('❌ Ошибка при получении статистики:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при получении статистики',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)

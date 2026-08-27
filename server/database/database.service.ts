@@ -705,18 +705,17 @@ class DatabaseService {
 
   // Получить список всех уникальных должностей
   getAllPositions(): string[] {
-    const result = this.db!.exec(`
+    if (!this.db) return []
+    
+    const stmt = this.db.prepare(`
       SELECT DISTINCT TRIM(Должность) as position
       FROM Участники 
       WHERE Должность IS NOT NULL AND TRIM(Должность) != ''
       ORDER BY TRIM(Должность) COLLATE NOCASE ASC
     `)
     
-    if (result.length > 0 && result[0].values.length > 0) {
-      return result[0].values.map(row => row[0] as string)
-    }
-    
-    return []
+    const results = stmt.all() as Array<{ position: string }>
+    return results.map(r => r.position)
   }
 
   // Получить или создать компанию по ИНН
@@ -1114,6 +1113,18 @@ class DatabaseService {
       SELECT 
         c.ИНН_компании as inn,
         c.Название as companyName,
+        c.КПП as kpp,
+        c.ОГРН as ogrn,
+        c.Основной_ОКВЭД as mainOkved,
+        c.Доп_ОКВЭДЫ as additionalOkveds,
+        c.Головная_или_филиал as branchType,
+        c.Тип_организации as organizationType,
+        c.ОПФ as opf,
+        c.Система_налогообложения as taxSystem,
+        c.Статус_организации as status,
+        c.Доходы as income,
+        c.Расходы as expense,
+        c.Дата_обновления_DaData as lastDaDataUpdate,
         (SELECT w.ID_вебинара
          FROM "Участники-Вебинары" uw 
          INNER JOIN Вебинары w ON uw.ID_вебинара = w.ID_вебинара 
@@ -1732,6 +1743,109 @@ class DatabaseService {
       `
       
       return this.execQuery(query, [limit])
+    }
+
+    // Обновить данные компании из DaData
+    updateCompanyFromDaData(
+      inn: string,
+      data: {
+        name?: string
+        kpp?: string | null
+        ogrn?: string | null
+        mainOkved?: string | null
+        additionalOkveds?: string | null
+        branchType?: string | null
+        organizationType?: string | null
+        opf?: string | null
+        taxSystem?: string | null
+        status?: string | null
+        income?: number | null
+        expense?: number | null
+      }
+    ) {
+      if (!this.db) return
+      
+      const now = new Date().toISOString()
+      
+      const stmt = this.db.prepare(`
+        UPDATE Компания 
+        SET 
+          Название = COALESCE(?, Название),
+          КПП = ?,
+          ОГРН = ?,
+          Основной_ОКВЭД = ?,
+          Доп_ОКВЭДЫ = ?,
+          Головная_или_филиал = ?,
+          Тип_организации = ?,
+          ОПФ = ?,
+          Система_налогообложения = ?,
+          Статус_организации = ?,
+          Доходы = ?,
+          Расходы = ?,
+          Дата_обновления_DaData = ?
+        WHERE ИНН_компании = ?
+      `)
+      
+      stmt.run(
+        data.name || null,
+        data.kpp || null,
+        data.ogrn || null,
+        data.mainOkved || null,
+        data.additionalOkveds || null,
+        data.branchType || null,
+        data.organizationType || null,
+        data.opf || null,
+        data.taxSystem || null,
+        data.status || null,
+        data.income || null,
+        data.expense || null,
+        now,
+        inn
+      )
+    }
+
+    // Получить компании без данных DaData или с устаревшими данными (старше 30 дней)
+    getCompaniesNeedingDaDataUpdate(limit: number = 100): string[] {
+      if (!this.db) return []
+      
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      const cutoffDate = thirtyDaysAgo.toISOString()
+      
+      const stmt = this.db.prepare(`
+        SELECT ИНН_компании as inn
+        FROM Компания
+        WHERE Дата_обновления_DaData IS NULL 
+           OR Дата_обновления_DaData < ?
+        ORDER BY Дата_обновления_DaData ASC
+        LIMIT ?
+      `)
+      
+      const results = stmt.all(cutoffDate, limit) as Array<{ inn: string }>
+      return results.map(r => r.inn)
+    }
+
+    // Проверить, нужно ли обновить данные компании из DaData
+    shouldUpdateCompanyFromDaData(inn: string): boolean {
+      if (!this.db) return false
+      
+      const stmt = this.db.prepare(`
+        SELECT Дата_обновления_DaData as lastUpdate
+        FROM Компания
+        WHERE ИНН_компании = ?
+      `)
+      
+      const result = stmt.get(inn) as { lastUpdate: string | null } | undefined
+      
+      if (!result) return false
+      if (!result.lastUpdate) return true
+      
+      // Обновляем если данные старше 30 дней
+      const lastUpdate = new Date(result.lastUpdate)
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      
+      return lastUpdate < thirtyDaysAgo
     }
 
 }

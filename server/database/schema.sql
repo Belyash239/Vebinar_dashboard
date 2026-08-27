@@ -2,7 +2,19 @@
 CREATE TABLE IF NOT EXISTS Компания (
   ID_компании INTEGER PRIMARY KEY AUTOINCREMENT,
   ИНН_компании TEXT UNIQUE NOT NULL,
-  Название TEXT
+  Название TEXT,
+  КПП TEXT,
+  ОГРН TEXT,
+  Основной_ОКВЭД TEXT,
+  Доп_ОКВЭДЫ TEXT,
+  Головная_или_филиал TEXT,
+  Тип_организации TEXT,
+  ОПФ TEXT,
+  Система_налогообложения TEXT,
+  Статус_организации TEXT,
+  Доходы INTEGER,
+  Расходы INTEGER,
+  Дата_обновления_DaData TEXT
 );
 
 -- Таблица «Участники»

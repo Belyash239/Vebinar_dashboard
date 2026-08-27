@@ -8,6 +8,18 @@ const router = useRouter()
 interface CompanyDetail {
   inn: string
   companyName: string | null
+  kpp: string | null
+  ogrn: string | null
+  mainOkved: string | null
+  additionalOkveds: string | null
+  branchType: string | null
+  organizationType: string | null
+  opf: string | null
+  taxSystem: string | null
+  status: string | null
+  income: number | null
+  expense: number | null
+  lastDaDataUpdate: string | null
   firstWebinarId: number | null
   firstWebinar: string | null
   avgRetention: number
@@ -52,6 +64,7 @@ const webinarSearchQuery = ref('')
 const participantSearchQuery = ref('')
 const isLoading = ref(false)
 const isSurveyAnswersExpanded = ref(true)
+const isEnrichingFromDaData = ref(false)
 
 const fetchCompanyDetail = async () => {
   try {
@@ -190,6 +203,52 @@ const loadData = async () => {
   isLoading.value = false
 }
 
+const enrichFromDaData = async () => {
+  if (!company.value) return
+  
+  isEnrichingFromDaData.value = true
+  try {
+    const inn = company.value.inn
+    const response = await fetch(`http://localhost:3000/api/enrich-company/${encodeURIComponent(inn)}`, {
+      method: 'POST'
+    })
+    
+    if (!response.ok) {
+      throw new Error('Ошибка при обогащении данных')
+    }
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      // Перезагружаем данные компании
+      await fetchCompanyDetail()
+      alert('Данные компании успешно обновлены из DaData')
+    }
+  } catch (error) {
+    console.error('Error enriching company data:', error)
+    alert('Ошибка при обновлении данных из DaData')
+  } finally {
+    isEnrichingFromDaData.value = false
+  }
+}
+
+const formatNumber = (num: number | null) => {
+  if (num === null || num === undefined) return '—'
+  return new Intl.NumberFormat('ru-RU').format(num)
+}
+
+const formatLastUpdate = (dateStr: string | null) => {
+  if (!dateStr) return 'Никогда'
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('ru-RU', { 
+    day: '2-digit', 
+    month: '2-digit', 
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 onMounted(() => {
   loadData()
 })
@@ -300,6 +359,113 @@ onMounted(() => {
                 </div>
               </div>
               <div class="text-lg text-gray-900">{{ company.interestedProducts.join(', ') || '—' }}</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Информация о компании из DaData -->
+        <section class="mb-8">
+          <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+              <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold text-gray-900">Информация о компании</h2>
+                
+                <button
+                  @click="enrichFromDaData"
+                  :disabled="isEnrichingFromDaData"
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <svg v-if="isEnrichingFromDaData" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  {{ isEnrichingFromDaData ? 'Обновление...' : 'Обновить из DaData' }}
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <!-- Основная информация -->
+                <div class="space-y-3">
+                  <div>
+                    <span class="font-medium text-gray-600">ИНН:</span>
+                    <span class="ml-2 text-gray-900">{{ company.inn }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">КПП:</span>
+                    <span class="ml-2 text-gray-900">{{ company.kpp || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">ОГРН:</span>
+                    <span class="ml-2 text-gray-900">{{ company.ogrn || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">ОПФ:</span>
+                    <span class="ml-2 text-gray-900">{{ company.opf || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Тип:</span>
+                    <span class="ml-2 text-gray-900">{{ company.organizationType || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Головная/Филиал:</span>
+                    <span class="ml-2 text-gray-900">{{ company.branchType || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Статус:</span>
+                    <span 
+                      class="ml-2 px-2 py-1 rounded text-xs"
+                      :class="{
+                        'bg-green-100 text-green-800': company.status === 'Действующая',
+                        'bg-yellow-100 text-yellow-800': company.status === 'Ликвидируется' || company.status === 'В процессе присоединения к другому юрлицу',
+                        'bg-red-100 text-red-800': company.status === 'Ликвидирована' || company.status === 'Банкротство',
+                        'bg-gray-100 text-gray-800': !company.status
+                      }"
+                    >
+                      {{ company.status || '—' }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Финансовая информация -->
+                <div class="space-y-3">
+                  <div>
+                    <span class="font-medium text-gray-600">Система налогообложения:</span>
+                    <span class="ml-2 text-gray-900">{{ company.taxSystem || '—' }}</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Доходы:</span>
+                    <span class="ml-2 text-gray-900">{{ formatNumber(company.income) }} ₽</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Расходы:</span>
+                    <span class="ml-2 text-gray-900">{{ formatNumber(company.expense) }} ₽</span>
+                  </div>
+                  
+                  <div>
+                    <span class="font-medium text-gray-600">Основной ОКВЭД:</span>
+                    <span class="ml-2 text-gray-900">{{ company.mainOkved || '—' }}</span>
+                  </div>
+                  
+                  <div v-if="company.additionalOkveds" class="col-span-2">
+                    <span class="font-medium text-gray-600">Дополнительные ОКВЭД:</span>
+                    <div class="ml-2 text-gray-900 text-xs mt-1 max-h-32 overflow-y-auto">
+                      {{ company.additionalOkveds }}
+                    </div>
+                  </div>
+                  
+                  <div class="text-xs text-gray-500 pt-2">
+                    Последнее обновление: {{ formatLastUpdate(company.lastDaDataUpdate) }}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>

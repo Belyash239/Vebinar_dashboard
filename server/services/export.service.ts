@@ -299,17 +299,31 @@ class ExportService {
           ORDER BY u.ID_участника
         `)
         
+        console.log(`    Всего записей с должностями из БД: ${allWithPositions.length}`)
+        
+        // Показываем несколько примеров должностей из БД для отладки
+        if (allWithPositions.length > 0 && pattern === searchPatterns[0]) {
+          console.log(`    Примеры должностей из БД (первые 10):`)
+          allWithPositions.slice(0, 10).forEach((p: any, idx: number) => {
+            console.log(`      ${idx + 1}. "${p.position}" (ID: ${p.participantId}, Email: ${p.email || 'нет'})`)
+          })
+        }
+        
         // Фильтруем на стороне JS с правильной обработкой кириллицы
         const patternLower = pattern.toLowerCase().trim()
         const participants = allWithPositions.filter((p: any) => {
           if (!p.position) return false
           const positionLower = p.position.toLowerCase().trim()
           
-          // Для "ип" требуем точное совпадение или наличие слова целиком
-          if (patternLower === 'ип') {
+          // Для "ип", "и.п.", "и. п." - ищем как подстроку ИЛИ как отдельное слово
+          if (patternLower === 'ип' || patternLower === 'и.п.' || patternLower === 'и. п.') {
+            // Точное совпадение
             if (positionLower === 'ип') return true
-            const words = positionLower.split(/[\s,\.\-\/]+/)
-            return words.includes('ип')
+            // Содержит "ип" как отдельное слово (окружено пробелами, слешами, точками и т.д.)
+            if (positionLower.match(/(\s|^|\/|,)ип(\s|$|\/|,)/)) return true
+            // Для паттернов с точками - ищем точное вхождение
+            if (patternLower.includes('.') && positionLower.includes(patternLower)) return true
+            return false
           }
           
           // Для "директор" - только точное совпадение
@@ -330,7 +344,6 @@ class ExportService {
           return positionLower.includes(patternLower)
         })
         
-        console.log(`    Всего записей с должностями: ${allWithPositions.length}`)
         console.log(`    Отфильтровано для паттерна "${pattern}": ${participants.length}`)
         
         // Показываем первые 5 найденных должностей для проверки

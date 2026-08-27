@@ -12,15 +12,19 @@
     "add-tags": "tsx scripts/add-tags-to-export.ts",
     "add-tags-simple": "tsx scripts/add-tags-simple.ts",
     "add-tags-streaming": "tsx scripts/add-tags-streaming.ts",
-    "preview-files": "tsx scripts/preview-files.ts"
+    "preview-files": "tsx scripts/preview-files.ts",
+    "enrich-companies": "tsx scripts/enrich-companies.ts"
   },
   "dependencies": {
+    "@types/node-fetch": "^2.6.13",
     "better-sqlite3": "^13.0.3",
     "chart.js": "^4.5.1",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
     "sql.js": "^1.10.3",
     "vue": "^3.4.21",
     "vue-router": "^4.6.4",
