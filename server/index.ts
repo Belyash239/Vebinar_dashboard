@@ -1340,6 +1340,66 @@ app.get('/api/companies-enrichment-stats', (req, res) => {
   }
 })
 
-app.listen(PORT, () => {
+// Endpoints для управления автообогащением DaData
+app.get('/api/dadata/config', async (req, res) => {
+  try {
+    const { dadataScheduler } = await import('./services/dadata-scheduler.service.js')
+    const config = dadataScheduler.getConfig()
+    const state = dadataScheduler.getState()
+    
+    res.json({ config, state })
+  } catch (error) {
+    console.error('❌ Ошибка при получении конфигурации DaData:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при получении конфигурации',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
+
+app.put('/api/dadata/config', async (req, res) => {
+  try {
+    const { dadataScheduler } = await import('./services/dadata-scheduler.service.js')
+    const updates = req.body
+    
+    dadataScheduler.updateConfig(updates)
+    
+    res.json({ 
+      success: true, 
+      config: dadataScheduler.getConfig() 
+    })
+  } catch (error) {
+    console.error('❌ Ошибка при обновлении конфигурации DaData:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при обновлении конфигурации',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
+
+app.post('/api/dadata/force-run', async (req, res) => {
+  try {
+    const { dadataScheduler } = await import('./services/dadata-scheduler.service.js')
+    const result = await dadataScheduler.forceRun()
+    
+    res.json(result)
+  } catch (error) {
+    console.error('❌ Ошибка при принудительном запуске DaData:', error)
+    res.status(500).json({ 
+      error: 'Ошибка при принудительном запуске',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
+})
+
+app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`)
+  
+  // Запускаем планировщик DaData
+  try {
+    const { dadataScheduler } = await import('./services/dadata-scheduler.service.js')
+    dadataScheduler.start()
+  } catch (error) {
+    console.error('❌ Ошибка запуска планировщика DaData:', error)
+  }
 })

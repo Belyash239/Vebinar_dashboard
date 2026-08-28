@@ -21,6 +21,10 @@ uploads/
 .env
 .env.local
 
+# DaData state and runtime config
+server/config/dadata-state.json
+server/config/dadata-runtime-config.json
+
 # Logs
 *.log
 
@@ -47,3 +51,5 @@ scripts/
 ДОБАВИТЬ_ТЕГИ.md
 webinars.db-shm
 webinars.db-wal
+Выгрузка МТС-Линк 2021 - Август 2026_converted.xlsx
+server/config/dadata-config.json.backup

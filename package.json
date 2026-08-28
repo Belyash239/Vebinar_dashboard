@@ -13,7 +13,10 @@
     "add-tags-simple": "tsx scripts/add-tags-simple.ts",
     "add-tags-streaming": "tsx scripts/add-tags-streaming.ts",
     "preview-files": "tsx scripts/preview-files.ts",
-    "enrich-companies": "tsx scripts/enrich-companies.ts"
+    "enrich-companies": "tsx scripts/enrich-companies.ts",
+    "debug-excel": "tsx scripts/debug-excel-values.ts",
+    "convert-dates": "tsx scripts/convert-dates-in-export.ts",
+    "check-types": "tsx scripts/check-column-types.ts"
   },
   "dependencies": {
     "@types/node-fetch": "^2.6.13",

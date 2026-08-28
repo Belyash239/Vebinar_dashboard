@@ -68,11 +68,44 @@ const loadTags = async () => {
   try {
     const response = await fetch('http://localhost:3000/api/tags')
     const tagsData = await response.json()
-    tags.value = tagsData.map((tag: any) => ({
-      id: tag.id,
-      name: tag.name,
-      checked: false
-    }))
+    
+    // Приоритетные теги в нужном порядке
+    const priorityOrder = [
+      '1С-Отчётность',
+      '1С-ЭПД',
+      'Астрал Отчёт 5.0',
+      'Доки',
+      'Астрал Подпись',
+      'Астрал Доверенность'
+    ]
+    
+    // Разделяем теги на приоритетные и остальные
+    const priorityTags: Tag[] = []
+    const otherTags: Tag[] = []
+    
+    tagsData.forEach((tag: any) => {
+      const tagObj = {
+        id: tag.id,
+        name: tag.name,
+        checked: false
+      }
+      
+      const priorityIndex = priorityOrder.indexOf(tag.name)
+      if (priorityIndex !== -1) {
+        priorityTags[priorityIndex] = tagObj
+      } else {
+        otherTags.push(tagObj)
+      }
+    })
+    
+    // Убираем пустые элементы из priorityTags (если тег не найден)
+    const filteredPriorityTags = priorityTags.filter(Boolean)
+    
+    // Сортируем остальные теги по алфавиту
+    otherTags.sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    
+    // Объединяем: приоритетные + остальные
+    tags.value = [...filteredPriorityTags, ...otherTags]
   } catch (error) {
     console.error('Error loading tags:', error)
     uploadError.value = 'Не удалось загрузить список тегов'

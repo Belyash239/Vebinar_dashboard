@@ -1345,7 +1345,54 @@ class ParserService {
         const mappedData: any = {}
         
         for (const [excelCol, dbField] of mappingMap.entries()) {
-          mappedData[dbField] = row[excelCol]
+          let value = row[excelCol]
+          
+          // Преобразуем Excel даты/времена
+          if (value !== undefined && value !== null && value !== '') {
+            // Если значение число (Excel serial date/time)
+            if (typeof value === 'number') {
+              // Проверяем поле "Присутствие относительно" - формат ч:мм:cc
+              if (dbField.toLowerCase().includes('присутствие_относительно') ||
+                  dbField.toLowerCase().includes('присутствие относительно')) {
+                // Это время в формате дробной части дня (0.5 = 12 часов)
+                const totalSeconds = Math.round(value * 24 * 60 * 60)
+                const hours = Math.floor(totalSeconds / 3600)
+                const minutes = Math.floor((totalSeconds % 3600) / 60)
+                const seconds = totalSeconds % 60
+                value = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+              }
+              // Проверяем поля "Время входа/выхода" - формат ДД.ММ.ГГГГ ч:мм
+              else if (dbField.toLowerCase().includes('время_входа') || 
+                       dbField.toLowerCase().includes('время_выхода') ||
+                       dbField.toLowerCase().includes('время входа') ||
+                       dbField.toLowerCase().includes('время выхода')) {
+                try {
+                  const date = XLSX.SSF.parse_date_code(value)
+                  if (date) {
+                    value = `${String(date.d).padStart(2, '0')}.${String(date.m).padStart(2, '0')}.${date.y} ${String(date.H).padStart(2, '0')}:${String(date.M).padStart(2, '0')}`
+                  }
+                } catch (e) {
+                  console.log(`⚠️ Не удалось преобразовать время для ${dbField}: ${value}`)
+                }
+              }
+              // Проверяем поле "Дата" - формат ГГГГ-ММ-ДД
+              else if (dbField.toLowerCase().includes('дата')) {
+                try {
+                  const date = XLSX.SSF.parse_date_code(value)
+                  if (date) {
+                    value = `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`
+                  }
+                } catch (e) {
+                  console.log(`⚠️ Не удалось преобразовать дату для ${dbField}: ${value}`)
+                }
+              }
+            } else if (typeof value === 'string') {
+              // Строка уже отформатирована Excel (формат "Общий"), оставляем как есть
+              value = value.trim()
+            }
+          }
+          
+          mappedData[dbField] = value
         }
         
         // Выводим первые 3 записи для отладки

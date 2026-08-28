@@ -152,26 +152,18 @@ class DatabaseService {
     const registrationsResult = db.prepare('SELECT COUNT(*) as count FROM "Участники-Вебинары"').get() as { count: number } | undefined
     const totalRegistrations = registrationsResult?.count || 0
     
-    // Наиболее популярный продукт (тег с наибольшим средним удержанием)
+    // Наиболее популярный продукт (тег с наибольшим количеством регистраций)
     const popularProductResult = db.prepare(`
       SELECT t.Название_тега as tag, 
-             AVG(
-               CAST(REPLACE(REPLACE(uw.Присутствие_от_общей_длительности, '%', ''), ',', '.') AS REAL)
-             ) as avg_retention
+             COUNT(*) as registration_count
       FROM "Вебинары-Теги" wt
       INNER JOIN Тег t ON wt.ID_тега = t.ID_тега
       INNER JOIN "Участники-Вебинары" uw ON wt.ID_мероприятия = uw.ID_вебинара
       WHERE t.Название_тега NOT IN ('для клиентов', 'для партнёров')
-        AND uw.Присутствие_от_общей_длительности IS NOT NULL
-        AND (
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 1, 2) AS INTEGER) * 60 +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 4, 2) AS INTEGER) +
-          CAST(SUBSTR(uw.Присутствие_относительно_длительности, 7, 2) AS INTEGER) / 60.0
-        ) >= 1
       GROUP BY t.Название_тега
-      ORDER BY avg_retention DESC
+      ORDER BY registration_count DESC
       LIMIT 1
-    `).get() as { tag: string } | undefined
+    `).get() as { tag: string, registration_count: number } | undefined
     const popularProduct = popularProductResult?.tag || 'Нет данных'
     
     // Среднее количество посещённых вебинаров на человека
@@ -720,6 +712,12 @@ class DatabaseService {
 
   // Получить или создать компанию по ИНН
   getOrCreateCompany(inn: string, companyName?: string) {
+    // Игнорируем конкретные ИНН (игнор-лист)
+    const ignoredInns = ['4027145240', '4029017981']
+    if (ignoredInns.includes(inn)) {
+      return null
+    }
+
     // Ищем компанию по ИНН
     const stmt = this.db!.prepare(`SELECT ID_компании FROM Компания WHERE ИНН_компании = ?`)
     const result = stmt.get(inn) as { ID_компании: number } | undefined
@@ -737,6 +735,12 @@ class DatabaseService {
   // Получить или создать участника
   // Получить или создать участника по email (email - уникальный идентификатор участника)
   getOrCreateParticipantByEmail(email: string, firstName: string, lastName: string, inn: string, phone?: string, companyName?: string, position?: string) {
+    // Игнорируем гостей (email содержит "гость")
+    if (email && email.toLowerCase().includes('гость')) {
+      console.log(`⚠️ Пропущен гость: ${email}`)
+      return null
+    }
+    
     // Сначала проверяем, существует ли участник с таким email
     const emailStmt = this.db!.prepare('SELECT ID_email, ID_участника FROM Email WHERE Email = ?')
     const emailResult = emailStmt.get(email) as { ID_email: number, ID_участника: number } | undefined
@@ -832,7 +836,12 @@ class DatabaseService {
   }
 
   // Добавить связь участник-вебинар
-  addParticipantWebinar(participantId: number, webinarId: number, data: any) {
+  addParticipantWebinar(participantId: number | null, webinarId: number, data: any) {
+    // Если participantId null (гость), пропускаем
+    if (participantId === null) {
+      return
+    }
+    
     // Заменяем все undefined на null
     const cleanData = {
       chatName: data.chatName || null,
@@ -1846,6 +1855,27 @@ class DatabaseService {
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
       
       return lastUpdate < thirtyDaysAgo
+    }
+
+    // Удалить компанию по ИНН (но сохранить участников)
+    deleteCompanyByInn(inn: string) {
+      if (!this.db) return
+
+      // Получаем ID компании
+      const stmt = this.db.prepare(`SELECT ID_компании FROM Компания WHERE ИНН_компании = ?`)
+      const company = stmt.get(inn) as { ID_компании: number } | undefined
+      
+      if (!company) return
+
+      // Отвязываем участников от компании (они остаются в БД)
+      const updateStmt = this.db.prepare(`UPDATE Участники SET ID_компании = NULL WHERE ID_компании = ?`)
+      updateStmt.run(company.ID_компании)
+
+      // Удаляем компанию
+      const deleteStmt = this.db.prepare(`DELETE FROM Компания WHERE ID_компании = ?`)
+      deleteStmt.run(company.ID_компании)
+
+      console.log(`🗑️ Компания с ИНН ${inn} удалена, участники сохранены`)
     }
 
 }

@@ -104,8 +104,9 @@ const tagOptions = ref<{ name: string; checked: boolean }[]>([])
 const isLoading = ref(false)
 const isLoadingUsers = ref(false)
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
-const selectedYear = ref<string>('all') // Выбранный год для фильтрации графика
+const selectedYears = ref<Set<string>>(new Set(['all'])) // Выбранные года для фильтрации графика
 const availableYears = ref<string[]>([]) // Доступные года из данных
+const isYearDropdownOpen = ref(false) // Состояние выпадающего списка
 let chartInstance: Chart | null = null
 
 const toggleAllChartDatasets = () => {
@@ -125,6 +126,41 @@ const toggleAllChartDatasets = () => {
   
   chartInstance.update()
 }
+
+const toggleYear = (year: string) => {
+  if (year === 'all') {
+    // Если выбрали "Все года", сбрасываем остальные
+    selectedYears.value.clear()
+    selectedYears.value.add('all')
+  } else {
+    // Убираем "Все года" если выбираем конкретный год
+    selectedYears.value.delete('all')
+    
+    if (selectedYears.value.has(year)) {
+      selectedYears.value.delete(year)
+      // Если не осталось выбранных годов, ставим "Все года"
+      if (selectedYears.value.size === 0) {
+        selectedYears.value.add('all')
+      }
+    } else {
+      selectedYears.value.add(year)
+    }
+  }
+  
+  renderChart()
+}
+
+const isYearSelected = (year: string) => {
+  return selectedYears.value.has(year)
+}
+
+const selectedYearsLabel = computed(() => {
+  if (selectedYears.value.has('all')) {
+    return 'Все года'
+  }
+  const years = Array.from(selectedYears.value).sort((a, b) => parseInt(b) - parseInt(a))
+  return years.length > 0 ? years.join(', ') : 'Выберите год'
+})
 
 const selectedTagsCount = computed(() => tagOptions.value.filter(t => t.checked).length)
 
@@ -403,8 +439,8 @@ const createChart = () => {
       allSeenParticipants.add(id)
     })
     
-    // Если этот месяц входит в выбранный год (или выбраны все года), добавляем в monthGroups
-    if (selectedYear.value === 'all' || year === selectedYear.value) {
+    // Если этот месяц входит в выбранные года (или выбраны все года), добавляем в monthGroups
+    if (selectedYears.value.has('all') || selectedYears.value.has(year)) {
       if (!monthGroups[currentMonth]) {
         monthGroups[currentMonth] = {}
       }
@@ -452,8 +488,8 @@ const createChart = () => {
     const seenParticipants = new Set<number>(allSeenParticipantsByProduct[product] || [])
     let previousTotal = seenParticipants.size
     
-    // Если выбран конкретный год, нужно вычислить начальное накопленное значение
-    if (selectedYear.value !== 'all' && sortedMonths.length > 0) {
+    // Если не выбраны все года, нужно вычислить начальное накопленное значение
+    if (!selectedYears.value.has('all') && sortedMonths.length > 0) {
       // Находим дату первого отображаемого месяца
       const firstDisplayedMonth = sortedMonths[0]
       const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
@@ -764,6 +800,11 @@ const loadData = async () => {
 
 onMounted(() => {
   loadData()
+  
+  // Закрываем dropdown при клике вне его
+  document.addEventListener('click', () => {
+    isYearDropdownOpen.value = false
+  })
 })
 </script>
 
@@ -922,7 +963,7 @@ onMounted(() => {
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <div class="absolute left-0 bottom-full mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded shadow-lg z-10">
-                    Продукт с наибольшим средним удержанием участников
+                    Продукт с наибольшим количеством регистраций на вебинары
                     <div class="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                   </div>
                 </div>
@@ -937,19 +978,57 @@ onMounted(() => {
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-semibold text-gray-900">Динамика посещений по времени (уникальных)</h2>
             <div class="flex items-center gap-3">
-              <!-- Выбор года -->
-              <div class="flex items-center gap-2">
-                <label class="text-sm text-gray-600">Год:</label>
-                <select
-                  v-model="selectedYear"
-                  @change="renderChart()"
-                  class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              <!-- Выпадающий список с чекбоксами -->
+              <div class="relative">
+                <label class="text-sm text-gray-600 mr-2">Год:</label>
+                <button
+                  @click.stop="isYearDropdownOpen = !isYearDropdownOpen"
+                  class="inline-flex items-center justify-between px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white hover:bg-gray-50 min-w-[150px]"
                 >
-                  <option value="all">Все года</option>
-                  <option v-for="year in availableYears" :key="year" :value="year">
-                    {{ year }}
-                  </option>
-                </select>
+                  <span>{{ selectedYearsLabel }}</span>
+                  <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                <!-- Выпадающее меню -->
+                <div
+                  v-if="isYearDropdownOpen"
+                  @click.stop
+                  class="absolute right-0 mt-2 w-48 bg-white border border-gray-300 rounded-lg shadow-lg z-50"
+                >
+                  <div class="py-2">
+                    <!-- Кнопка "Все года" (сброс) -->
+                    <button
+                      @click="toggleYear('all')"
+                      class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between"
+                      :class="isYearSelected('all') ? 'bg-blue-50 text-blue-700 font-medium' : ''"
+                    >
+                      <span>Все года</span>
+                      <svg v-if="isYearSelected('all')" class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                      </svg>
+                    </button>
+                    
+                    <!-- Разделитель -->
+                    <div class="border-t border-gray-200 my-1"></div>
+                    
+                    <!-- Отдельные года -->
+                    <label 
+                      v-for="year in availableYears" 
+                      :key="year"
+                      class="flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="isYearSelected(year)"
+                        @change="toggleYear(year)"
+                        class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span class="ml-2 text-sm text-gray-700">{{ year }}</span>
+                    </label>
+                  </div>
+                </div>
               </div>
               
               <button

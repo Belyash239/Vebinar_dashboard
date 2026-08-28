@@ -1,5 +1,6 @@
 import fetch from 'node-fetch'
 import * as dotenv from 'dotenv'
+import https from 'https'
 
 // Загружаем переменные окружения
 dotenv.config()
@@ -10,6 +11,28 @@ const DADATA_URL = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findByI
 if (!DADATA_API_KEY) {
   console.warn('⚠️ DADATA_API_KEY не найден в .env файле. Обогащение данных компаний будет недоступно.')
 }
+
+// HTTP Agent с keepalive для переиспользования соединений
+// 
+// DaData ограничения:
+// 1. Rate limit: 20 запросов/сек
+// 2. Connection limit: 60 НОВЫХ соединений в минуту
+//
+// Без keepalive каждый fetch() создаёт новое TCP-соединение,
+// что приводит к блокировке после 60-го запроса.
+//
+// С keepalive одно соединение используется для множества запросов,
+// что позволяет делать 20 запросов/сек без ограничений по соединениям.
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000, // Поддерживать соединение 30 секунд
+  maxSockets: 5,          // Максимум 5 одновременных соединений
+  maxFreeSockets: 2,      // Держать 2 свободных соединения в пуле
+  timeout: 60000,         // Таймаут соединения 60 секунд
+  scheduling: 'fifo'      // First In First Out
+})
+
+console.log('✓ DaData HTTP Agent создан с keepalive (макс. 5 соединений)')
 
 interface DaDataCompanyResponse {
   suggestions: Array<{
@@ -87,7 +110,8 @@ class DaDataService {
           query: inn.trim(),
           count: 1,
           branch_type: 'MAIN' // Получаем только головную организацию по умолчанию
-        })
+        }),
+        agent: httpsAgent // Используем agent с keepalive
       })
 
       if (!response.ok) {
@@ -192,8 +216,9 @@ class DaDataService {
         results.set(inn, data)
       }
       
-      // Задержка между запросами (ограничение DaData - 20 запросов/сек)
-      await new Promise(resolve => setTimeout(resolve, 60))
+      // Задержка между запросами для соблюдения rate limit DaData (20 запросов/сек)
+      // С keepalive можем безопасно использовать все 20 запросов/сек
+      await new Promise(resolve => setTimeout(resolve, 65))
     }
 
     console.log(`✅ DaData: получены данные для ${results.size} из ${inns.length} компаний`)
